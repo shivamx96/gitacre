@@ -1,0 +1,34 @@
+# macOS metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Swift Package Manager and local build products
+.build/
+.swiftpm/
+Packages/
+build/
+
+# Xcode user state and derived data
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+
+# JetBrains IDE state
+.idea/
+*.iml
+
+# Local configuration and signing credentials
+.env
+.env.*
+!.env.example
+*.p8
+*.p12
+*.mobileprovision
+*.provisionprofile
+
+# Release artifacts
+*.dmg
+*.pkg
