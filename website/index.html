@@ -3,14 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f6f5f1">
-  <meta name="description" content="gitacre is a native macOS menu-bar companion for unfinished Git work, worktrees, and pull requests.">
-  <meta property="og:title" content="gitacre — Your Git work, at a glance">
-  <meta property="og:description" content="A quiet, native macOS companion for local changes, worktrees, and pull requests.">
+  <meta name="theme-color" content="#f5f5f2">
+  <meta name="description" content="gitacre is a native macOS menu-bar app for local Git changes, worktrees, and pull requests.">
+  <meta property="og:title" content="gitacre — Your Git work, one glance away">
+  <meta property="og:description" content="A native macOS menu-bar app for local changes, worktrees, and pull requests.">
   <meta property="og:type" content="website">
-  <title>gitacre — Your Git work, at a glance</title>
+  <title>gitacre — Your Git work, one glance away</title>
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="assets/app-icon.png">
+  <link rel="manifest" href="site.webmanifest">
   <link rel="stylesheet" href="styles.css">
   <script src="script.js" defer></script>
 </head>
@@ -20,13 +21,13 @@
   <header class="site-header">
     <div class="nav shell">
       <a class="brand" href="#top" aria-label="gitacre home">
-        <img src="assets/app-icon.png" alt="" width="32" height="32">
+        <img src="assets/app-icon.png" alt="" width="30" height="30">
         <span>gitacre</span>
       </a>
-      <nav aria-label="Main navigation">
+      <nav class="nav-links" aria-label="Main navigation">
         <a href="#product">Product</a>
-        <a href="#principles">Principles</a>
         <a href="https://github.com/shivamx96/gitacre">GitHub</a>
+        <a class="nav-download is-unavailable release-link" href="https://github.com/shivamx96/gitacre/releases/latest" aria-disabled="true">Beta soon</a>
       </nav>
     </div>
   </header>
@@ -34,175 +35,108 @@
   <main id="main">
     <section class="hero shell" id="top">
       <div class="hero-copy">
-        <p class="eyebrow"><span></span> Native to macOS. Quiet by design.</p>
-        <h1>Your Git work,<br>at a glance.</h1>
-        <p class="hero-lede">gitacre gathers unfinished local changes, worktrees, and pull requests into one calm menu-bar panel—so nothing important slips out of view.</p>
+        <p class="eyebrow">A native Git companion for macOS</p>
+        <h1>Your Git work,<br>one glance away.</h1>
+        <p class="lede">Local changes, linked worktrees, and pull requests—kept in one quiet menu-bar app.</p>
         <div class="hero-actions">
-          <a class="button button-primary is-unavailable" id="download-button" href="https://github.com/shivamx96/gitacre/releases/latest" aria-disabled="true">
+          <a class="button button-primary is-unavailable release-link" href="https://github.com/shivamx96/gitacre/releases/latest" aria-disabled="true">
             <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M10 2v10m0 0 4-4m-4 4L6 8M3 15.5h14"/></svg>
             <span>Public beta soon</span>
           </a>
-          <a class="button button-secondary" href="https://github.com/shivamx96/gitacre">View on GitHub</a>
+          <a class="button button-quiet" href="https://github.com/shivamx96/gitacre">View on GitHub <span aria-hidden="true">↗</span></a>
         </div>
-        <p class="release-note" id="release-note">Native app for macOS 14 and later</p>
-        <ul class="trust-list" aria-label="Product highlights">
-          <li>No new account</li>
-          <li>Uses your existing <code>gh</code> session</li>
-          <li>Local-first</li>
-        </ul>
+        <p class="requirements" id="release-note">macOS 14+ · No new account · Local-first</p>
       </div>
 
-      <div class="hero-visual" aria-label="gitacre Pending panel on macOS">
-        <div class="ambient ambient-one"></div>
-        <div class="ambient ambient-two"></div>
-        <div class="menu-context" aria-hidden="true">
-          <span></span><span></span><span></span>
-          <div class="menu-glyph">
-            <svg viewBox="0 0 18 18"><path d="M6 3v12M6 9c4 0 6-2 6-6M6 3h0M6 15h0M12 3h0"/></svg>
-            <b>3</b>
-          </div>
+      <div class="product-preview">
+        <div class="preview-glow" aria-hidden="true"></div>
+        <div class="preview-window" role="tabpanel" aria-live="polite" aria-labelledby="preview-repositories">
+          <img id="preview-image" src="assets/screenshots/gitacre-pending.png" alt="gitacre showing repositories with uncommitted, ahead-of-remote, and stashed work" width="836" height="1132">
         </div>
-        <img class="panel-shot" src="assets/screenshots/gitacre-pending.png" alt="gitacre showing repositories with uncommitted, ahead-of-remote, and stashed work" width="836" height="1132">
-      </div>
-    </section>
-
-    <section class="signal-strip" aria-label="Git states tracked by gitacre">
-      <div class="shell signal-track">
-        <span>staged</span><i></i><span>modified</span><i></i><span>untracked</span><i></i><span>ahead</span><i></i><span>behind</span><i></i><span>stashed</span><i></i><span>worktrees</span>
-      </div>
-    </section>
-
-    <section class="product shell" id="product">
-      <div class="section-intro">
-        <p class="kicker">One small surface</p>
-        <h2>Everything waiting.<br>Nothing noisy.</h2>
-        <p>gitacre makes your working state visible without becoming another dashboard to manage.</p>
-      </div>
-
-      <div class="feature-list">
-        <article>
-          <div class="feature-number">01</div>
-          <div>
-            <h3>See what needs attention</h3>
-            <p>Staged, modified, untracked, ahead, behind, conflicts, and stashes—grouped by repository and ordered by urgency.</p>
-          </div>
-          <div class="feature-mark status-lines" aria-hidden="true"><span></span><span></span><span></span></div>
-        </article>
-        <article>
-          <div class="feature-number">02</div>
-          <div>
-            <h3>Worktree-aware by default</h3>
-            <p>Related worktrees stay together. Expand only when you need the detail, then jump straight to Finder, your terminal, or the remote.</p>
-          </div>
-          <div class="feature-mark branch-lines" aria-hidden="true"><span></span><span></span><span></span></div>
-        </article>
-        <article>
-          <div class="feature-number">03</div>
-          <div>
-            <h3>Pull requests, without another login</h3>
-            <p>Review requests and your open PRs use the GitHub CLI session already on your Mac. gitacre never reads or stores your token.</p>
-          </div>
-          <div class="feature-mark pr-lines" aria-hidden="true"><span></span><span></span></div>
-        </article>
-      </div>
-
-      <div class="worktree-preview">
-        <div class="worktree-shot">
-          <div class="worktree-halo"></div>
-          <img src="assets/screenshots/gitacre-worktrees.png" alt="gitacre showing a repository expanded into its primary and linked feature worktrees" width="836" height="1132" loading="lazy">
+        <div class="preview-switcher" role="tablist" aria-label="Product previews">
+          <button id="preview-repositories" type="button" role="tab" aria-selected="true" data-preview="repositories">Repositories</button>
+          <button id="preview-worktrees" type="button" role="tab" aria-selected="false" data-preview="worktrees">Worktrees</button>
+          <button id="preview-prs" type="button" role="tab" aria-selected="false" data-preview="prs">Pull requests</button>
         </div>
-        <div class="worktree-copy">
-          <p class="kicker">Worktrees, understood</p>
-          <h2>One repository.<br>Every working tree.</h2>
-          <p>gitacre groups linked worktrees beneath their repository instead of pretending each checkout is a separate project. Expand the row when you want branch-level status and actions; leave it collapsed when you don’t.</p>
-          <div class="worktree-detail">
-            <span>main <b>Primary</b></span>
-            <i></i>
-            <span>feat/command-menu</span>
-          </div>
+        <div class="preview-caption">
+          <strong id="preview-title">Unfinished work, surfaced.</strong>
+          <span id="preview-description">See every repository that needs attention without opening a terminal.</span>
         </div>
       </div>
     </section>
 
-    <section class="showcase">
-      <div class="shell showcase-grid">
-        <div class="showcase-copy">
-          <p class="kicker">Remote work, nearby</p>
-          <h2>Reviews belong beside the work.</h2>
-          <p>Open pull requests across repositories sit one tab away from local changes. Review requests rise to the top; your authored work stays easy to scan.</p>
+    <section class="essentials shell" id="product" aria-labelledby="essentials-title">
+      <div class="section-heading">
+        <p class="eyebrow">The essentials</p>
+        <h2 id="essentials-title">The context you need.<br>Nothing you don’t.</h2>
+      </div>
+      <div class="essential-grid">
+        <article>
+          <span class="essential-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h9M5 17h11"/><circle cx="19" cy="12" r="2"/></svg>
+          </span>
+          <h3>Pending work</h3>
+          <p>Staged, modified, untracked, ahead, behind, conflicted, and stashed states in one compact list.</p>
+        </article>
+        <article>
+          <span class="essential-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M7 5v14M7 12h5c3 0 5-2 5-5"/><circle cx="7" cy="5" r="2"/><circle cx="7" cy="19" r="2"/><circle cx="17" cy="7" r="2"/></svg>
+          </span>
+          <h3>Worktrees together</h3>
+          <p>Linked checkouts stay beneath their repository, with branch-level status and direct actions when expanded.</p>
+        </article>
+        <article>
+          <span class="essential-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M6 5h12v11H9l-3 3V5Z"/><path d="M9 9h6M9 12h4"/></svg>
+          </span>
+          <h3>Pull requests nearby</h3>
+          <p>Review requests and your open PRs use the GitHub CLI session already active on your Mac.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="workflow">
+      <div class="workflow-inner shell">
+        <div class="workflow-copy">
+          <p class="eyebrow">Fits your setup</p>
+          <h2>Set it once.<br>Then forget it.</h2>
+          <p>Choose the folders you work from and the terminal you prefer. gitacre quietly refreshes in the background and opens where your work already lives.</p>
           <ul>
-            <li>Separate review requests from authored PRs</li>
-            <li>Open any row directly on GitHub</li>
-            <li>Filter drafts and organizations</li>
+            <li>Terminal, iTerm2, Ghostty, Warp, Alacritty, and more</li>
+            <li>System, light, and dark appearance</li>
+            <li>Launch at login and global keyboard shortcut</li>
           </ul>
         </div>
-        <div class="showcase-shot">
-          <div class="shot-halo"></div>
-          <img src="assets/screenshots/gitacre-prs.png" alt="gitacre showing pull requests that need review and pull requests opened by the user" width="836" height="1132" loading="lazy">
+        <div class="settings-preview">
+          <img src="assets/screenshots/gitacre-settings.png" alt="gitacre settings for appearance, menu-bar behavior, launch at login, refresh, and keyboard shortcut" width="1320" height="1008" loading="lazy">
         </div>
       </div>
     </section>
 
-    <section class="settings shell">
-      <div class="settings-frame">
-        <div class="settings-copy">
-          <p class="kicker">Feels at home</p>
-          <h2>Purposeful controls.<br>No configuration maze.</h2>
-          <p>Choose monitored folders, your preferred terminal, appearance, GitHub behavior, and launch-at-login—all in a native settings window.</p>
-          <div class="terminal-list" aria-label="Supported terminal applications">
-            <span>Terminal</span><span>iTerm2</span><span>Ghostty</span><span>Warp</span><span>Alacritty</span>
-          </div>
-        </div>
-        <div class="settings-shot">
-          <img src="assets/screenshots/gitacre-settings.png" alt="gitacre settings showing appearance, menu-bar, launch, refresh, and keyboard shortcut controls" width="1320" height="1008" loading="lazy">
-        </div>
+    <section class="privacy shell">
+      <img src="assets/app-icon.png" alt="" width="52" height="52">
+      <div>
+        <h2>Private by construction.</h2>
+        <p>Repository scanning happens locally. GitHub access stays with the official <code>gh</code> session you control. gitacre never reads or stores your token.</p>
       </div>
-    </section>
-
-    <section class="principles shell" id="principles">
-      <div class="principles-heading">
-        <p class="kicker">Built with restraint</p>
-        <h2>A good menu-bar app knows its place.</h2>
-      </div>
-      <div class="principle-grid">
-        <article>
-          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 2.8 8.1 7 10 4.2-1.9 7-5.5 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-5"/></svg>
-          <h3>Private by construction</h3>
-          <p>Repository scanning happens locally. GitHub access stays with the official CLI session you control.</p>
-        </article>
-        <article>
-          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 12h16M12 4v16"/><circle cx="12" cy="12" r="9"/></svg>
-          <h3>Native, not wrapped</h3>
-          <p>Built with SwiftUI and AppKit for crisp typography, familiar behavior, and a tiny operational footprint.</p>
-        </article>
-        <article>
-          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 15c3-1 4-5 4-9 4 2 6 6 6 10 2-2 3-4 3-7 2 2 3 5 3 7a8 8 0 0 1-16-1Z"/></svg>
-          <h3>Calm by default</h3>
-          <p>No feeds, streaks, or attention traps. Just the state of your work when you ask for it.</p>
-        </article>
-      </div>
+      <a href="https://github.com/shivamx96/gitacre">Read the source <span aria-hidden="true">↗</span></a>
     </section>
 
     <section class="closing shell">
-      <img src="assets/app-icon.png" alt="" width="72" height="72">
-      <p class="kicker">Your work, accounted for</p>
+      <p class="eyebrow">Coming to your menu bar</p>
       <h2>Keep Git close.<br>Keep your focus closer.</h2>
       <a class="button button-primary is-unavailable release-link" href="https://github.com/shivamx96/gitacre/releases/latest" aria-disabled="true">Public beta soon</a>
-      <p class="closing-note">Free first release · macOS 14+</p>
     </section>
   </main>
 
   <footer>
-    <div class="shell footer-inner">
+    <div class="footer-inner shell">
       <a class="brand" href="#top">
-        <img src="assets/app-icon.png" alt="" width="28" height="28">
+        <img src="assets/app-icon.png" alt="" width="26" height="26">
         <span>gitacre</span>
       </a>
-      <p>Made for people who keep one more branch open than they meant to.</p>
-      <div>
-        <a href="https://github.com/shivamx96/gitacre">GitHub</a>
-        <span>© <span id="year">2026</span> Shivam Shekhar</span>
-      </div>
+      <span>© <span id="year">2026</span> Shivam Shekhar</span>
+      <a href="https://github.com/shivamx96/gitacre">GitHub</a>
     </div>
   </footer>
 </body>
