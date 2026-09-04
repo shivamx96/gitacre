@@ -30,5 +30,6 @@ xcuserdata/
 *.provisionprofile
 
 # Release artifacts
+/dist/
 *.dmg
 *.pkg

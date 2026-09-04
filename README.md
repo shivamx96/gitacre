@@ -29,7 +29,7 @@ swift run Gitacre
 
 ```sh
 scripts/build-app.sh
-open build/Gitacre.app
+open build/gitacre.app
 ```
 
 gitacre looks for `gh` in common Homebrew locations and uses the active `github.com` account. Local repository monitoring works without GitHub or network access.
@@ -37,3 +37,7 @@ gitacre looks for `gh` in common Homebrew locations and uses the active `github.
 ## Website
 
 The static product site and its sanitized, real-app screenshots live in [`website/`](website/). It has no build step or runtime dependencies.
+
+## Releases
+
+Release builds are universal, Developer ID-signed, notarized, and packaged as a disk image. See [`docs/RELEASING.md`](docs/RELEASING.md) for the credential setup and release procedure.
