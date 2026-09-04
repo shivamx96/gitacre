@@ -1,0 +1,10 @@
+{
+  "name": "gitacre",
+  "short_name": "gitacre",
+  "icons": [
+    { "src": "assets/app-icon.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "theme_color": "#f6f5f1",
+  "background_color": "#f6f5f1",
+  "display": "browser"
+}

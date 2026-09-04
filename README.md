@@ -33,3 +33,7 @@ open build/Gitacre.app
 ```
 
 gitacre looks for `gh` in common Homebrew locations and uses the active `github.com` account. Local repository monitoring works without GitHub or network access.
+
+## Website
+
+The static product site and its sanitized, real-app screenshots live in [`website/`](website/). It has no build step or runtime dependencies.

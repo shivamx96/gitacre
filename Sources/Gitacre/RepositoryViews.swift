@@ -242,6 +242,9 @@ private struct RepositoryRow: View {
 private struct WorktreeChildren: View {
     let repository: Repository
 
+    private let rowHeight: CGFloat = 41
+    private let separatorHeight: CGFloat = 1
+
     var body: some View {
         VStack(spacing: 0) {
             ForEach(Array(repository.worktrees.enumerated()), id: \.element.id) { index, worktree in
@@ -251,14 +254,32 @@ private struct WorktreeChildren: View {
                 }
             }
         }
-        .overlay(alignment: .leading) {
-            Rectangle()
-                .fill(Color.secondary.opacity(0.19))
-                .frame(width: 1)
-                .padding(.vertical, 4)
-                .offset(x: 40)
-        }
         .padding(.leading, 45)
+        .overlay {
+            Canvas { context, _ in
+                let trunkX: CGFloat = 10.5
+                let firstRowCenter = rowHeight / 2
+                let rowStride = rowHeight + separatorHeight
+                let lastRowCenter = firstRowCenter + CGFloat(max(repository.worktrees.count - 1, 0)) * rowStride
+
+                var connectors = Path()
+                connectors.move(to: CGPoint(x: trunkX, y: 0))
+                connectors.addLine(to: CGPoint(x: trunkX, y: lastRowCenter))
+
+                for index in repository.worktrees.indices {
+                    let centerY = firstRowCenter + CGFloat(index) * rowStride
+                    connectors.move(to: CGPoint(x: trunkX, y: centerY))
+                    connectors.addLine(to: CGPoint(x: 48, y: centerY))
+                }
+
+                context.stroke(
+                    connectors,
+                    with: .color(Color.secondary.opacity(0.19)),
+                    style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round)
+                )
+            }
+            .allowsHitTesting(false)
+        }
     }
 }
 
