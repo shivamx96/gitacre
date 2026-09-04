@@ -7,6 +7,10 @@ import UserNotifications
 
 @MainActor
 final class AppModel: ObservableObject {
+    private static let bundleIdentifier = "com.shivamx96.gitacre"
+    private static let legacyBundleIdentifier = "dev.shivam.gitacre"
+    private static let legacyDefaultsMigrationKey = "didMigrateDefaultsFromDevBundleIdentifier"
+
     @Published private(set) var repositories: [Repository] = []
     @Published private(set) var githubSnapshot = GitHubSnapshot(authentication: .cliMissing)
     @Published private(set) var isLoadingRepositories = false
@@ -63,6 +67,7 @@ final class AppModel: ObservableObject {
     }
 
     init() {
+        Self.migrateLegacyDefaultsIfNeeded()
         let defaults = UserDefaults.standard
         let savedRoots = defaults.stringArray(forKey: Keys.roots) ?? []
         roots = savedRoots.isEmpty ? Self.defaultRoots() : savedRoots
@@ -346,6 +351,19 @@ final class AppModel: ObservableObject {
 
     private func save(_ value: Any, for key: String) { UserDefaults.standard.set(value, forKey: key) }
 
+    private static func migrateLegacyDefaultsIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: legacyDefaultsMigrationKey) else { return }
+
+        if let legacyDefaults = defaults.persistentDomain(forName: legacyBundleIdentifier) {
+            for (key, value) in legacyDefaults where defaults.object(forKey: key) == nil {
+                defaults.set(value, forKey: key)
+            }
+        }
+
+        defaults.set(true, forKey: legacyDefaultsMigrationKey)
+    }
+
     private static func defaultRoots() -> [String] {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return ["Developer", "Projects", "IdeaProjects"]
@@ -355,7 +373,7 @@ final class AppModel: ObservableObject {
 
     static func githubCacheURL() -> URL? {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("dev.shivam.gitacre", isDirectory: true)
+            .appendingPathComponent(bundleIdentifier, isDirectory: true)
             .appendingPathComponent("pull-requests.json")
     }
 }

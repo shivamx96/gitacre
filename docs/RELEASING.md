@@ -6,13 +6,13 @@ The prerelease label belongs in the Git tag and artifact name. Apple bundle meta
 
 ## One-time signing setup
 
-1. In Xcode, open **Settings → Accounts → Manage Certificates** and create or install a **Developer ID Application** certificate for team `ZTDW6J5Q27`.
+1. In Xcode, open **Settings → Accounts → Manage Certificates** and create or install a **Developer ID Application** certificate for team `RP9BF8YGPZ`.
 2. Store notarization credentials in the login keychain. This command prompts securely for the app-specific password:
 
    ```sh
    xcrun notarytool store-credentials gitacre-notary \
      --apple-id "YOUR_APPLE_ID" \
-     --team-id "ZTDW6J5Q27"
+     --team-id "RP9BF8YGPZ"
    ```
 
 Never place the Apple ID password, API private key, or signing certificate in the repository.
@@ -22,7 +22,7 @@ Never place the Apple ID password, API private key, or signing certificate in th
 From a clean checkout on `main`:
 
 ```sh
-GITACRE_SIGNING_IDENTITY="Developer ID Application: Shivam Shekhar (ZTDW6J5Q27)" \
+GITACRE_SIGNING_IDENTITY="Developer ID Application: Shivam Shekhar (RP9BF8YGPZ)" \
   scripts/release.sh 1.0.0-beta 1
 ```
 

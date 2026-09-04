@@ -7,7 +7,7 @@
     <key>CFBundleExecutable</key>
     <string>Gitacre</string>
     <key>CFBundleIdentifier</key>
-    <string>dev.shivam.gitacre</string>
+    <string>com.shivamx96.gitacre</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>

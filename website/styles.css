@@ -545,7 +545,7 @@ footer { border-top: 1px solid var(--line); }
   .essential-icon { margin-bottom: 22px; }
   .workflow-inner { min-height: auto; grid-template-columns: 1fr; gap: 58px; padding-block: 85px 0; }
   .workflow-copy { padding-bottom: 0; }
-  .settings-preview { width: 650px; }
+  .settings-preview { width: min(650px, 100%); }
   .privacy { min-height: auto; grid-template-columns: auto 1fr; gap: 20px; padding-block: 56px; }
   .privacy > a { grid-column: 2; }
   .closing { padding-block: 92px 100px; }
@@ -564,7 +564,7 @@ footer { border-top: 1px solid var(--line); }
   .preview-window img { width: 325px; }
   .preview-switcher { width: calc(100% - 32px); }
   .preview-switcher button { flex: 1; padding-inline: 4px; }
-  .settings-preview { width: 610px; }
+  .settings-preview { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
