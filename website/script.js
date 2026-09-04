@@ -1,5 +1,5 @@
-const releaseEndpoint = "https://api.github.com/repos/shivamx96/gitacre/releases/latest";
-const releasesEnabled = false;
+const releaseEndpoint = "https://api.github.com/repos/shivamx96/gitacre/releases/tags/v1.0.0-beta";
+const releasesEnabled = true;
 
 const previews = {
   repositories: {
@@ -73,7 +73,7 @@ previewTabs.forEach((tab, index) => {
 function enableRelease(release) {
   const diskImage = release.assets?.find((asset) => asset.name.toLowerCase().endsWith(".dmg"));
   const downloadURL = diskImage?.browser_download_url || release.html_url;
-  const version = release.name || release.tag_name;
+  const version = release.tag_name?.replace(/^v/, "") || release.name;
 
   document.querySelectorAll(".release-link, #download-button").forEach((link) => {
     link.href = downloadURL;
@@ -81,11 +81,11 @@ function enableRelease(release) {
     link.removeAttribute("aria-disabled");
     const label = link.querySelector("span");
     if (label) label.textContent = "Download for macOS";
-    else link.textContent = "Download for macOS";
+    else link.textContent = link.classList.contains("nav-download") ? "Download" : "Download for macOS";
   });
 
   const note = document.querySelector("#release-note");
-  if (note) note.textContent = `${version} · Native app for macOS 14 and later`;
+  if (note) note.textContent = `${version} · macOS 14+ · Apple silicon + Intel`;
 }
 
 document.querySelectorAll("[aria-disabled='true']").forEach((link) => {
