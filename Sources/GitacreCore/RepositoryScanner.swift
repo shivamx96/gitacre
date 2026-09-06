@@ -24,16 +24,27 @@ public struct RepositoryScanner: Sendable {
     public func scan(roots: [String]) -> [Repository] {
         let checkouts = discoverCheckouts(roots: roots)
         var representatives: [String: String] = [:]
+        var unreadable: [Repository] = []
 
         for checkout in checkouts {
-            guard let commonDirectory = commonDirectory(for: checkout) else { continue }
-            representatives[commonDirectory] = representatives[commonDirectory] ?? checkout
+            switch commonDirectory(for: checkout) {
+            case let .found(commonDirectory):
+                representatives[commonDirectory] = representatives[commonDirectory] ?? checkout
+            case let .unreadable(reason):
+                // Without a common directory this checkout cannot be grouped, so it stands
+                // alone under its own path rather than disappearing from the list.
+                unreadable.append(Self.unreadableRepository(checkout: checkout, reason: reason))
+            }
         }
 
-        return representatives.compactMap { commonDirectory, checkout in
+        let readable = representatives.compactMap { commonDirectory, checkout in
             makeRepository(commonDirectory: commonDirectory, checkout: checkout)
         }
-        .sorted {
+
+        return (readable + unreadable).sorted {
+            if ($0.scanFailure != nil) != ($1.scanFailure != nil) {
+                return $0.scanFailure != nil
+            }
             if $0.hasPendingWork != $1.hasPendingWork {
                 return $0.hasPendingWork
             }
@@ -92,20 +103,35 @@ public struct RepositoryScanner: Sendable {
         FileManager.default.fileExists(atPath: URL(fileURLWithPath: path).appendingPathComponent(".git").path)
     }
 
-    private func commonDirectory(for checkout: String) -> String? {
+    private enum CommonDirectoryOutcome {
+        case found(String)
+        case unreadable(String)
+    }
+
+    private func commonDirectory(for checkout: String) -> CommonDirectoryOutcome {
         let result = git(
             checkout,
             ["rev-parse", "--path-format=absolute", "--git-common-dir"]
         )
-        guard result.succeeded else { return nil }
+        guard result.succeeded else {
+            return .unreadable(Self.failureReason(result, fallback: "git could not read this repository."))
+        }
         let output = result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !output.isEmpty else { return nil }
-        return URL(fileURLWithPath: output).standardizedFileURL.path
+        guard !output.isEmpty else {
+            return .unreadable("git did not report a git directory for this checkout.")
+        }
+        return .found(URL(fileURLWithPath: output).standardizedFileURL.path)
     }
 
     private func makeRepository(commonDirectory: String, checkout: String) -> Repository? {
         let worktreeResult = git(checkout, ["worktree", "list", "--porcelain", "-z"])
-        guard worktreeResult.succeeded else { return nil }
+        guard worktreeResult.succeeded else {
+            return Self.unreadableRepository(
+                checkout: checkout,
+                commonDirectory: commonDirectory,
+                reason: Self.failureReason(worktreeResult, fallback: "git could not list worktrees.")
+            )
+        }
 
         let discoveredRecords = Self.parseWorktreeList(worktreeResult.standardOutput)
         let records: [WorktreeRecord]
@@ -117,10 +143,28 @@ public struct RepositoryScanner: Sendable {
                     == URL(fileURLWithPath: checkout).standardizedFileURL.path
             }
         }
-        let worktrees = records.enumerated().compactMap { index, record in
-            makeWorktree(record: record, isPrimary: index == 0)
+        var worktrees: [Worktree] = []
+        var failures: [String] = []
+        for (index, record) in records.enumerated() {
+            switch makeWorktree(record: record, isPrimary: index == 0) {
+            case let .worktree(worktree):
+                worktrees.append(worktree)
+            case .pruned:
+                // git still lists it but the directory is gone; `git worktree prune` clears it.
+                continue
+            case let .unreadable(reason):
+                failures.append(reason)
+            }
         }
-        guard !worktrees.isEmpty else { return nil }
+
+        guard !worktrees.isEmpty else {
+            guard !failures.isEmpty else { return nil }
+            return Self.unreadableRepository(
+                checkout: checkout,
+                commonDirectory: commonDirectory,
+                reason: Self.combine(failures)
+            )
+        }
 
         let originResult = git(checkout, ["config", "--get", "remote.origin.url"])
         let origin = originResult.succeeded
@@ -142,18 +186,33 @@ public struct RepositoryScanner: Sendable {
             remoteURL: remoteURL,
             worktrees: worktrees,
             stashCount: stashCount,
-            iconPath: iconPath
+            iconPath: iconPath,
+            scanFailure: failures.isEmpty ? nil : Self.combine(failures)
         )
     }
 
-    private func makeWorktree(record: WorktreeRecord, isPrimary: Bool) -> Worktree? {
-        guard FileManager.default.fileExists(atPath: record.path) else { return nil }
+    private enum WorktreeOutcome {
+        case worktree(Worktree)
+        /// The directory git listed no longer exists on disk.
+        case pruned
+        /// The directory exists but git could not report on it.
+        case unreadable(String)
+    }
+
+    private func makeWorktree(record: WorktreeRecord, isPrimary: Bool) -> WorktreeOutcome {
+        guard FileManager.default.fileExists(atPath: record.path) else { return .pruned }
 
         let statusResult = git(
             record.path,
             ["--no-optional-locks", "status", "--porcelain=v2", "--branch", "--untracked-files=normal"]
         )
-        guard statusResult.succeeded else { return nil }
+        guard statusResult.succeeded else {
+            let name = URL(fileURLWithPath: record.path).lastPathComponent
+            return .unreadable(Self.failureReason(
+                statusResult,
+                fallback: "git could not read the status of \(name)."
+            ))
+        }
         let status = Self.parseStatus(statusResult.standardOutput)
 
         let gitDirectoryResult = git(record.path, ["rev-parse", "--absolute-git-dir"])
@@ -171,7 +230,7 @@ public struct RepositoryScanner: Sendable {
             ? String(record.head.prefix(8))
             : status.branch
 
-        return Worktree(
+        return .worktree(Worktree(
             id: record.path,
             path: record.path,
             branch: branch,
@@ -189,7 +248,45 @@ public struct RepositoryScanner: Sendable {
             upstream: status.upstream,
             operation: operation,
             lastCommitDate: timestamp.map(Date.init(timeIntervalSince1970:))
+        ))
+    }
+
+    /// Builds the placeholder shown in place of a repository git refused to report on.
+    private static func unreadableRepository(
+        checkout: String,
+        commonDirectory: String? = nil,
+        reason: String
+    ) -> Repository {
+        Repository(
+            id: commonDirectory ?? checkout,
+            name: URL(fileURLWithPath: checkout).lastPathComponent,
+            commonDirectory: commonDirectory ?? checkout,
+            remoteURL: nil,
+            worktrees: [],
+            stashCount: 0,
+            iconPath: nil,
+            scanFailure: reason
         )
+    }
+
+    /// Picks the line of git's stderr worth showing, skipping its follow-up advice.
+    static func failureReason(_ result: ProcessResult, fallback: String) -> String {
+        let meaningful = result.standardError
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { line in
+                !line.isEmpty
+                    && !line.hasPrefix("hint:")
+                    && !line.hasPrefix("warning:")
+                    && !line.hasPrefix("To add an exception")
+            }
+        guard let meaningful, !meaningful.isEmpty else { return fallback }
+        return meaningful
+    }
+
+    private static func combine(_ reasons: [String]) -> String {
+        var seen: Set<String> = []
+        return reasons.filter { seen.insert($0).inserted }.joined(separator: "\n")
     }
 
     private func git(_ directory: String, _ arguments: [String]) -> ProcessResult {

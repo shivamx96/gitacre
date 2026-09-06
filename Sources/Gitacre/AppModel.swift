@@ -94,7 +94,7 @@ final class AppModel: ObservableObject {
         Task { [weak self] in await self?.refreshAll() }
     }
 
-    var pendingRepositories: [Repository] { repositories.filter(\.hasPendingWork) }
+    var pendingRepositories: [Repository] { repositories.filter(\.needsAttention) }
     var pendingCount: Int { pendingRepositories.count }
     var reviewCount: Int { visiblePullRequests.filter { $0.kind == .reviewRequested }.count }
     var attentionCount: Int { pendingCount + reviewCount }

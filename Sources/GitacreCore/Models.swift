@@ -9,6 +9,12 @@ public struct Repository: Identifiable, Equatable, Sendable {
     public let stashCount: Int
     public let iconPath: String?
 
+    /// Why git could not report on this repository, when it could not.
+    ///
+    /// Set whenever any part of the scan failed, so a repository that cannot be read is
+    /// shown with the reason rather than quietly dropped from the list.
+    public let scanFailure: String?
+
     public init(
         id: String,
         name: String,
@@ -16,7 +22,8 @@ public struct Repository: Identifiable, Equatable, Sendable {
         remoteURL: URL?,
         worktrees: [Worktree],
         stashCount: Int,
-        iconPath: String? = nil
+        iconPath: String? = nil,
+        scanFailure: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -25,6 +32,12 @@ public struct Repository: Identifiable, Equatable, Sendable {
         self.worktrees = worktrees
         self.stashCount = stashCount
         self.iconPath = iconPath
+        self.scanFailure = scanFailure
+    }
+
+    /// True when git reported on at least one worktree.
+    public var isReadable: Bool {
+        !worktrees.isEmpty
     }
 
     public var pendingWorktreeCount: Int {
@@ -33,6 +46,12 @@ public struct Repository: Identifiable, Equatable, Sendable {
 
     public var hasPendingWork: Bool {
         pendingWorktreeCount > 0 || stashCount > 0
+    }
+
+    /// Repositories that could not be read need the same attention as pending work:
+    /// something is wrong and the counts below cannot be trusted.
+    public var needsAttention: Bool {
+        scanFailure != nil || hasPendingWork
     }
 
     public var totalChangedFiles: Int {

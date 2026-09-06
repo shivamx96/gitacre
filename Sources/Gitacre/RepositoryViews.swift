@@ -11,19 +11,24 @@ struct RepositoryListView: View {
     var emptyAction: (() -> Void)?
 
     private var sections: [RepositorySection] {
+        // A repository git could not read reports no worktrees, so it would otherwise land
+        // in CLEAN and claim to be in sync. It gets its own section instead.
+        let unreadable = model.repositories.filter { !$0.isReadable }
+        let readable = model.repositories.filter(\.isReadable)
+
         if showsPendingOnly {
             return [
-                RepositorySection(title: "UNCOMMITTED", repositories: model.repositories.filter { $0.hasUncommittedWork }),
-                RepositorySection(title: "AHEAD OF REMOTE", repositories: model.repositories.filter { !$0.hasUncommittedWork && $0.totalAhead > 0 }),
-                RepositorySection(title: "STASHED", repositories: model.repositories.filter { !$0.hasUncommittedWork && $0.totalAhead == 0 && $0.stashCount > 0 })
+                RepositorySection(title: "UNREADABLE", repositories: unreadable),
+                RepositorySection(title: "UNCOMMITTED", repositories: readable.filter { $0.hasUncommittedWork }),
+                RepositorySection(title: "AHEAD OF REMOTE", repositories: readable.filter { !$0.hasUncommittedWork && $0.totalAhead > 0 }),
+                RepositorySection(title: "STASHED", repositories: readable.filter { !$0.hasUncommittedWork && $0.totalAhead == 0 && $0.stashCount > 0 })
             ].filter { !$0.repositories.isEmpty }
         }
 
-        let active = model.repositories.filter(\.hasPendingWork)
-        let clean = model.repositories.filter { !$0.hasPendingWork }
         return [
-            RepositorySection(title: "ACTIVE", repositories: active),
-            RepositorySection(title: "CLEAN", repositories: clean)
+            RepositorySection(title: "UNREADABLE", repositories: unreadable),
+            RepositorySection(title: "ACTIVE", repositories: readable.filter(\.hasPendingWork)),
+            RepositorySection(title: "CLEAN", repositories: readable.filter { !$0.hasPendingWork })
         ].filter { !$0.repositories.isEmpty }
     }
 
@@ -210,6 +215,7 @@ private struct RepositoryRow: View {
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(repositoryAccessibilityLabel)
+            .help(repository.scanFailure ?? "")
 
             if expanded && repository.worktrees.count > 1 {
                 WorktreeChildren(repository: repository)
@@ -228,6 +234,7 @@ private struct RepositoryRow: View {
     }
 
     private var repositoryStatusRole: StatusRole {
+        if repository.scanFailure != nil { return .blocked }
         if repository.worktrees.contains(where: { $0.operation != nil || $0.conflicted > 0 }) { return .blocked }
         if repository.hasPendingWork { return .drift }
         return .clean
@@ -500,11 +507,15 @@ struct StatusFactsView: View {
 }
 
 func statusFacts(repository: Repository?, worktree: Worktree?) -> [StatusFact] {
+    if let repository, !repository.isReadable, repository.scanFailure != nil {
+        return [StatusFact(text: "unreadable", role: .blocked)]
+    }
     guard let worktree else {
         if let repository, repository.stashCount > 0 { return [StatusFact(text: "\(repository.stashCount) stashed", role: .drift)] }
         return [StatusFact(text: "clean · in sync", role: .clean)]
     }
     var facts: [StatusFact] = []
+    if let repository, repository.scanFailure != nil { facts.append(StatusFact(text: "partly unreadable", role: .blocked)) }
     if let operation = worktree.operation { facts.append(StatusFact(text: "\(operation.displayName) in progress", role: .blocked)) }
     if worktree.conflicted > 0 { facts.append(StatusFact(text: "\(worktree.conflicted) conflict\(worktree.conflicted == 1 ? "" : "s")", role: .blocked)) }
     if worktree.staged > 0 { facts.append(StatusFact(text: "\(worktree.staged) staged", role: .secondary)) }
