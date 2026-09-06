@@ -25,6 +25,11 @@ let package = Package(
             name: "GitacreCoreTests",
             dependencies: ["GitacreCore"],
             path: "Tests/GitacreCoreTests"
+        ),
+        .testTarget(
+            name: "GitacreTests",
+            dependencies: ["Gitacre"],
+            path: "Tests/GitacreTests"
         )
     ],
     swiftLanguageModes: [.v5]

@@ -154,6 +154,7 @@ final class AppModel: ObservableObject {
                 ignoredDirectoryNames: ignored
             ).scan(roots: scannedRoots)
         }.value
+        RepositoryIconCache.shared.invalidate()
         repositories = result
         lastRepositoryRefresh = Date()
         isLoadingRepositories = false
