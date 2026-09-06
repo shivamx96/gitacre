@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import GitacreCore
 
@@ -116,6 +117,49 @@ final class RepositoryScannerTests: XCTestCase {
     func testFailureReasonFallsBackWhenGitIsSilent() {
         let result = ProcessResult(standardOutput: "", standardError: "   \n", terminationStatus: 128)
         XCTAssertEqual(RepositoryScanner.failureReason(result, fallback: "could not read"), "could not read")
+    }
+
+    func testConcurrentMapPreservesInputOrder() {
+        let inputs = Array(0..<64)
+
+        let outputs = RepositoryScanner.concurrentMap(inputs) { value in
+            // Stagger the work so out-of-order completion is the norm, not the exception.
+            Thread.sleep(forTimeInterval: Double((value * 7) % 5) / 1_000)
+            return value * 2
+        }
+
+        XCTAssertEqual(outputs, inputs.map { $0 * 2 })
+    }
+
+    func testConcurrentMapHandlesTrivialInputs() {
+        XCTAssertEqual(RepositoryScanner.concurrentMap([Int]()) { $0 + 1 }, [])
+        XCTAssertEqual(RepositoryScanner.concurrentMap([7]) { $0 + 1 }, [8])
+    }
+
+    func testScanReturnsEveryRepositoryAndIsStableAcrossRuns() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let runner = ProcessRunner()
+        let names = (0..<16).map { String(format: "repo-%02d", $0) }
+        for name in names {
+            let checkout = root.appendingPathComponent(name, isDirectory: true)
+            try FileManager.default.createDirectory(at: checkout, withIntermediateDirectories: true)
+            XCTAssertTrue(runner.run(executable: "/usr/bin/git", arguments: ["-C", checkout.path, "init", "-q"]).succeeded)
+            try Data("pending\n".utf8).write(to: checkout.appendingPathComponent("pending.txt"))
+        }
+
+        let scanner = RepositoryScanner()
+        let first = scanner.scan(roots: [root.path])
+
+        XCTAssertEqual(first.count, names.count, "no repository may be lost to concurrency")
+        XCTAssertEqual(Set(first.map(\.id)).count, names.count, "no repository may be counted twice")
+        XCTAssertEqual(first.map(\.name).sorted(), names)
+
+        // Ordering must not depend on which parallel task happens to finish first.
+        XCTAssertEqual(scanner.scan(roots: [root.path]).map(\.id), first.map(\.id))
     }
 
     func testRepositoryWithOnlyAStashIsPending() {
