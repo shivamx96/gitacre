@@ -44,6 +44,80 @@ final class RepositoryScannerTests: XCTestCase {
         XCTAssertEqual(primaryOnly[0].worktrees.count, 1)
     }
 
+    func testUnreadableRepositoryIsSurfacedRatherThanDropped() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let healthy = root.appendingPathComponent("healthy", isDirectory: true)
+        let broken = root.appendingPathComponent("broken", isDirectory: true)
+        try FileManager.default.createDirectory(at: healthy, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: broken, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let runner = ProcessRunner()
+        for checkout in [healthy, broken] {
+            XCTAssertTrue(runner.run(executable: "/usr/bin/git", arguments: ["-C", checkout.path, "init", "-q"]).succeeded)
+        }
+        // git refuses to operate on a repository whose format it does not recognise, the same
+        // way it refuses one it considers dubiously owned.
+        XCTAssertTrue(runner.run(
+            executable: "/usr/bin/git",
+            arguments: ["-C", broken.path, "config", "core.repositoryformatversion", "99"]
+        ).succeeded)
+
+        let repositories = RepositoryScanner().scan(roots: [root.path])
+
+        XCTAssertEqual(repositories.count, 2, "the unreadable repository must still be listed")
+        let unreadable = try XCTUnwrap(repositories.first { $0.name == "broken" })
+        XCTAssertNotNil(unreadable.scanFailure)
+        XCTAssertFalse(unreadable.isReadable)
+        XCTAssertTrue(unreadable.needsAttention, "an unreadable repository must not read as clean")
+
+        let readable = try XCTUnwrap(repositories.first { $0.name == "healthy" })
+        XCTAssertNil(readable.scanFailure)
+        XCTAssertTrue(readable.isReadable)
+
+        XCTAssertEqual(repositories.first?.name, "broken", "unreadable repositories sort first")
+    }
+
+    func testUnreadableRepositoryDoesNotReportItselfAsClean() {
+        let repository = Repository(
+            id: "/tmp/example/.git",
+            name: "example",
+            commonDirectory: "/tmp/example/.git",
+            remoteURL: nil,
+            worktrees: [],
+            stashCount: 0,
+            scanFailure: "fatal: detected dubious ownership in repository at '/tmp/example'"
+        )
+
+        XCTAssertFalse(repository.isReadable)
+        XCTAssertTrue(repository.needsAttention)
+        XCTAssertFalse(repository.hasPendingWork)
+    }
+
+    func testFailureReasonPrefersGitsMessageOverItsFollowUpAdvice() {
+        let result = ProcessResult(
+            standardOutput: "",
+            standardError: """
+            fatal: detected dubious ownership in repository at '/Volumes/work/example'
+            To add an exception for this directory, call:
+
+            \tgit config --global --add safe.directory /Volumes/work/example
+            """,
+            terminationStatus: 128
+        )
+
+        XCTAssertEqual(
+            RepositoryScanner.failureReason(result, fallback: "unused"),
+            "fatal: detected dubious ownership in repository at '/Volumes/work/example'"
+        )
+    }
+
+    func testFailureReasonFallsBackWhenGitIsSilent() {
+        let result = ProcessResult(standardOutput: "", standardError: "   \n", terminationStatus: 128)
+        XCTAssertEqual(RepositoryScanner.failureReason(result, fallback: "could not read"), "could not read")
+    }
+
     func testRepositoryWithOnlyAStashIsPending() {
         let repository = Repository(
             id: "/tmp/example/.git",
