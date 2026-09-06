@@ -55,6 +55,7 @@ struct GitacrePanel: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
+            UpdateBanner()
             footer
         }
         .frame(width: 392, height: 540)

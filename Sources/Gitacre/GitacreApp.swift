@@ -27,6 +27,7 @@ struct GitacreApp: App {
 @MainActor
 final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let model = AppModel()
+    let updates = UpdateController()
 
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
@@ -72,6 +73,7 @@ final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
                 onQuit: { NSApp.terminate(nil) }
             )
             .environmentObject(model)
+            .environmentObject(updates)
         )
     }
 
@@ -151,7 +153,7 @@ final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     private func showSettings() {
         closePopover()
         if settingsWindow == nil {
-            let controller = NSHostingController(rootView: GitacreSettingsView().environmentObject(model))
+            let controller = NSHostingController(rootView: GitacreSettingsView().environmentObject(model).environmentObject(updates))
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 660, height: 472),
                 styleMask: [.titled, .closable, .miniaturizable],

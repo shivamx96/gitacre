@@ -19,6 +19,12 @@ fi
 
 marketing_version=${release_label%%-*}
 notary_profile=${GITACRE_NOTARY_PROFILE:-gitacre-notary}
+appcast_url=${GITACRE_APPCAST_URL:-https://gitacre.app/appcast.xml}
+appcast_path=${GITACRE_APPCAST_PATH:-$repository/website/appcast.xml}
+public_key=${GITACRE_SPARKLE_PUBLIC_KEY:-}
+skip_appcast=${GITACRE_SKIP_APPCAST:-0}
+download_url_prefix=${GITACRE_DOWNLOAD_URL_PREFIX:-https://github.com/shivamx96/gitacre/releases/download/v$release_label}
+release_notes_link=${GITACRE_RELEASE_NOTES_LINK:-https://github.com/shivamx96/gitacre/releases/tag/v$release_label}
 skip_notarization=${GITACRE_SKIP_NOTARIZATION:-0}
 allow_adhoc=${GITACRE_ALLOW_ADHOC:-0}
 signing_identity=${GITACRE_SIGNING_IDENTITY:-}
@@ -68,8 +74,18 @@ trap cleanup EXIT
 mkdir -p "$output_directory"
 rm -f -- "$dmg_path" "$checksum_path"
 
+if [[ -z "$public_key" && "$skip_appcast" != "1" ]]; then
+    echo "GITACRE_SPARKLE_PUBLIC_KEY is not set, so the build could not verify updates." >&2
+    echo "Create a key once with .build/artifacts/sparkle/Sparkle/bin/generate_keys," >&2
+    echo "then export its public half. For a build without updates, set GITACRE_SKIP_APPCAST=1." >&2
+    exit 1
+fi
+
 GITACRE_VERSION="$marketing_version" \
 GITACRE_BUILD_NUMBER="$build_number" \
+GITACRE_RELEASE_LABEL="$release_label" \
+GITACRE_APPCAST_URL="$appcast_url" \
+GITACRE_SPARKLE_PUBLIC_KEY="$public_key" \
 GITACRE_ARCHS="arm64 x86_64" \
 GITACRE_SIGNING_IDENTITY="$signing_identity" \
     "$repository/scripts/build-app.sh" release
@@ -116,4 +132,41 @@ hdiutil verify "$dmg_path"
     shasum -a 256 "$(basename "$dmg_path")" > "$(basename "$checksum_path")"
 )
 
+if [[ "$skip_appcast" != "1" ]]; then
+    sign_update=$(
+        find "$repository/.build/artifacts" -type f -path "*Sparkle/bin/sign_update" -print -quit
+    )
+
+    if [[ -z "$sign_update" ]]; then
+        echo "sign_update was not found. Run 'swift package resolve' first." >&2
+        exit 1
+    fi
+
+    # sign_update prints the enclosure attributes, for example:
+    #   sparkle:edSignature="..." length="12345"
+    signature_attributes=$("$sign_update" "$dmg_path")
+    signature=$(sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p' <<< "$signature_attributes")
+    length=$(sed -n 's/.*length="\([^"]*\)".*/\1/p' <<< "$signature_attributes")
+
+    if [[ -z "$signature" || -z "$length" ]]; then
+        echo "Could not read a signature from sign_update: $signature_attributes" >&2
+        exit 1
+    fi
+
+    python3 "$repository/scripts/update-appcast.py" \
+        --appcast "$appcast_path" \
+        --version "$build_number" \
+        --short-version "$release_label" \
+        --url "$download_url_prefix/$(basename "$dmg_path")" \
+        --length "$length" \
+        --signature "$signature" \
+        --minimum-system-version "$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$app_bundle/Contents/Info.plist")" \
+        --release-notes-link "$release_notes_link"
+fi
+
 printf '\nRelease candidate created:\n%s\n%s\n' "$dmg_path" "$checksum_path"
+
+if [[ "$skip_appcast" != "1" ]]; then
+    printf '\nAppcast updated:\n%s\n\nPublish it by uploading the disk image to the v%s release and deploying the website.\n' \
+        "$appcast_path" "$release_label"
+fi

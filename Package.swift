@@ -11,6 +11,9 @@ let package = Package(
         .library(name: "GitacreCore", targets: ["GitacreCore"]),
         .executable(name: "Gitacre", targets: ["Gitacre"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0")
+    ],
     targets: [
         .target(
             name: "GitacreCore",
@@ -18,7 +21,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "Gitacre",
-            dependencies: ["GitacreCore"],
+            dependencies: [
+                "GitacreCore",
+                .product(name: "Sparkle", package: "Sparkle")
+            ],
             path: "Sources/Gitacre"
         ),
         .testTarget(

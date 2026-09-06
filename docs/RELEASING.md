@@ -2,7 +2,9 @@
 
 gitacre is distributed outside the Mac App Store as a universal, Developer ID-signed, notarized disk image.
 
-The prerelease label belongs in the Git tag and artifact name. Apple bundle metadata remains numeric: `1.0.0-beta` is packaged with `CFBundleShortVersionString` set to `1.0.0` and an independently increasing `CFBundleVersion`.
+The prerelease label belongs in the Git tag and artifact name. Apple bundle metadata remains numeric: `1.0.0-beta` is packaged with `CFBundleShortVersionString` set to `1.0.0` and an independently increasing `CFBundleVersion`. The full label is also written to `GitacreReleaseLabel`, so the app can tell `1.0.0-beta` from `1.0.0` even though the two share a short version string.
+
+**`CFBundleVersion` must increase with every release.** It is the number Sparkle compares to decide whether an update exists; the marketing version plays no part. `scripts/release.sh` refuses to publish a build number that is not greater than the newest already in the appcast.
 
 ## One-time signing setup
 
@@ -15,7 +17,21 @@ The prerelease label belongs in the Git tag and artifact name. Apple bundle meta
      --team-id "RP9BF8YGPZ"
    ```
 
-Never place the Apple ID password, API private key, or signing certificate in the repository.
+3. Generate the EdDSA key Sparkle uses to sign updates. This is separate from the Developer ID certificate and only needs doing once, ever:
+
+   ```sh
+   .build/artifacts/sparkle/Sparkle/bin/generate_keys
+   ```
+
+   The private key is stored in the login keychain. Print the public half with `generate_keys -p` and export it for builds:
+
+   ```sh
+   export GITACRE_SPARKLE_PUBLIC_KEY="$(.build/artifacts/sparkle/Sparkle/bin/generate_keys -p)"
+   ```
+
+   The public key is baked into the app as `SUPublicEDKey`. An app can only accept updates signed by the matching private key, so **losing the private key means shipping users can never be updated again** — back it up with `generate_keys -x`.
+
+Never place the Apple ID password, API private key, signing certificate, or the Sparkle private key in the repository.
 
 ## Build the release candidate
 
@@ -23,15 +39,27 @@ From a clean checkout on `main`:
 
 ```sh
 GITACRE_SIGNING_IDENTITY="Developer ID Application: Shivam Shekhar (RP9BF8YGPZ)" \
-  scripts/release.sh 1.0.0-beta 1
+GITACRE_SPARKLE_PUBLIC_KEY="$(.build/artifacts/sparkle/Sparkle/bin/generate_keys -p)" \
+GITACRE_APPCAST_URL="https://gitacre.app/appcast.xml" \
+  scripts/release.sh 1.0.0-beta 2
 ```
 
-The script builds a universal `arm64` and `x86_64` app, enables the hardened runtime, submits the app and disk image to Apple's notary service, staples both tickets, runs Gatekeeper and disk-image verification, and writes a SHA-256 checksum under `dist/`.
+The script builds a universal `arm64` and `x86_64` app, embeds and signs `Sparkle.framework`, enables the hardened runtime, submits the app and disk image to Apple's notary service, staples both tickets, runs Gatekeeper and disk-image verification, and writes a SHA-256 checksum under `dist/`.
+
+It then signs the disk image with the Sparkle key and writes the release into `website/appcast.xml`. Set `GITACRE_APPCAST_URL` to wherever the site is actually deployed: it is baked into the app as `SUFeedURL`, and a build cannot be pointed at a different feed afterwards.
+
+| Variable | Purpose |
+| --- | --- |
+| `GITACRE_SPARKLE_PUBLIC_KEY` | Public half of the update signing key, baked in as `SUPublicEDKey` |
+| `GITACRE_APPCAST_URL` | Feed the app polls, baked in as `SUFeedURL` |
+| `GITACRE_APPCAST_PATH` | Where to write the feed (default `website/appcast.xml`) |
+| `GITACRE_DOWNLOAD_URL_PREFIX` | Where the disk image will be published |
+| `GITACRE_SKIP_APPCAST` | Set to `1` to build without touching the feed |
 
 For pipeline testing only, an explicitly marked local artifact can be created without Developer ID credentials:
 
 ```sh
-GITACRE_ALLOW_ADHOC=1 GITACRE_SKIP_NOTARIZATION=1 \
+GITACRE_ALLOW_ADHOC=1 GITACRE_SKIP_NOTARIZATION=1 GITACRE_SKIP_APPCAST=1 \
   scripts/release.sh 1.0.0-beta 1
 ```
 
@@ -55,3 +83,21 @@ gh release create v1.0.0-beta \
 ```
 
 Once the release and public repository are available, set `releasesEnabled` to `true` in `website/script.js`, verify the download link, and deploy the website container again.
+
+## Publish the update feed
+
+Deploying the website is what actually ships the update: the app polls `appcast.xml` there, and nothing reaches existing installs until it is live.
+
+```sh
+git add website/appcast.xml
+git commit -m "Publish 1.0.0-beta to the update feed"
+docker build --tag gitacre-website:local website && docker compose -f website/compose.yaml up -d
+curl -sSf https://gitacre.app/appcast.xml | head
+```
+
+Check that the newest `<item>` carries the right `sparkle:version`, that its `enclosure url` resolves, and that `sparkle:edSignature` is present. An entry whose signature does not match the disk image is rejected by every client, silently, so verify before announcing:
+
+```sh
+.build/artifacts/sparkle/Sparkle/bin/sign_update --verify \
+  dist/gitacre-1.0.0-beta.dmg "<signature from the appcast>"
+```
