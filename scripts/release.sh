@@ -19,7 +19,7 @@ fi
 
 marketing_version=${release_label%%-*}
 notary_profile=${GITACRE_NOTARY_PROFILE:-gitacre-notary}
-appcast_url=${GITACRE_APPCAST_URL:-https://gitacre.app/appcast.xml}
+appcast_url=${GITACRE_APPCAST_URL:-https://raw.githubusercontent.com/shivamx96/gitacre/main/website/appcast.xml}
 appcast_path=${GITACRE_APPCAST_PATH:-$repository/website/appcast.xml}
 public_key=${GITACRE_SPARKLE_PUBLIC_KEY:-}
 skip_appcast=${GITACRE_SKIP_APPCAST:-0}

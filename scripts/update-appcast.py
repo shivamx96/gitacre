@@ -124,6 +124,9 @@ def main():
     ElementTree.indent(tree, space="    ")
     arguments.appcast.parent.mkdir(parents=True, exist_ok=True)
     tree.write(arguments.appcast, encoding="UTF-8", xml_declaration=True)
+    # Without this every release shows up as a "no newline at end of file" diff.
+    with arguments.appcast.open("a", encoding="utf-8") as feed:
+        feed.write("\n")
     print(f"Wrote {arguments.short_version} (build {arguments.version}) to {arguments.appcast}")
 
 

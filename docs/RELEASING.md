@@ -40,13 +40,20 @@ From a clean checkout on `main`:
 ```sh
 GITACRE_SIGNING_IDENTITY="Developer ID Application: Shivam Shekhar (RP9BF8YGPZ)" \
 GITACRE_SPARKLE_PUBLIC_KEY="$(.build/artifacts/sparkle/Sparkle/bin/generate_keys -p)" \
-GITACRE_APPCAST_URL="https://gitacre.app/appcast.xml" \
-  scripts/release.sh 1.0.0-beta 2
+  scripts/release.sh 1.0.0-beta.2 2
 ```
 
 The script builds a universal `arm64` and `x86_64` app, embeds and signs `Sparkle.framework`, enables the hardened runtime, submits the app and disk image to Apple's notary service, staples both tickets, runs Gatekeeper and disk-image verification, and writes a SHA-256 checksum under `dist/`.
 
-It then signs the disk image with the Sparkle key and writes the release into `website/appcast.xml`. Set `GITACRE_APPCAST_URL` to wherever the site is actually deployed: it is baked into the app as `SUFeedURL`, and a build cannot be pointed at a different feed afterwards.
+It then signs the disk image with the Sparkle key and writes the release into `website/appcast.xml`.
+
+The feed defaults to the copy of that file served from `main`:
+
+```
+https://raw.githubusercontent.com/shivamx96/gitacre/main/website/appcast.xml
+```
+
+**Merging the release commit into `main` is what publishes the update.** The file also ships with the website container, so moving the feed to a domain later is a matter of changing `GITACRE_APPCAST_URL` for the next build. It is baked into each app as `SUFeedURL` and cannot be repointed afterwards, so existing installs keep polling whichever URL they were built with — never retire an old feed URL, redirect it.
 
 | Variable | Purpose |
 | --- | --- |
@@ -82,22 +89,28 @@ gh release create v1.0.0-beta \
   --notes-file release-notes/1.0.0-beta.md
 ```
 
-Once the release and public repository are available, set `releasesEnabled` to `true` in `website/script.js`, verify the download link, and deploy the website container again.
+Once the release and public repository are available, verify the download link and deploy the website container again. The site reads the newest published release from the GitHub API, so it needs no edit per release. It deliberately uses the release *list* rather than `/releases/latest`, which excludes prereleases and answers 404 while every release is a prerelease.
 
 ## Publish the update feed
 
-Deploying the website is what actually ships the update: the app polls `appcast.xml` there, and nothing reaches existing installs until it is live.
+Landing `website/appcast.xml` on `main` is what actually ships the update. Nothing reaches existing installs until it is there.
 
 ```sh
-git add website/appcast.xml
-git commit -m "Publish 1.0.0-beta to the update feed"
-docker build --tag gitacre-website:local website && docker compose -f website/compose.yaml up -d
-curl -sSf https://gitacre.app/appcast.xml | head
+git add website/appcast.xml release-notes/
+git commit -m "Publish 1.0.0-beta.2 to the update feed"
+git push origin main
+curl -sSf https://raw.githubusercontent.com/shivamx96/gitacre/main/website/appcast.xml | head
 ```
 
 Check that the newest `<item>` carries the right `sparkle:version`, that its `enclosure url` resolves, and that `sparkle:edSignature` is present. An entry whose signature does not match the disk image is rejected by every client, silently, so verify before announcing:
 
 ```sh
 .build/artifacts/sparkle/Sparkle/bin/sign_update --verify \
-  dist/gitacre-1.0.0-beta.dmg "<signature from the appcast>"
+  dist/gitacre-1.0.0-beta.2.dmg "<signature from the appcast>"
 ```
+
+## Bootstrapping note
+
+1.0.0-beta shipped without an updater, so it cannot install 1.0.0-beta.2 over itself. The first Sparkle-carrying release has to be downloaded by hand; automatic updates begin working for the release after it. Say so in the release notes rather than leaving people to discover it.
+
+Both labels reduce to the same `CFBundleShortVersionString` of `1.0.0`, because the suffix is stripped. They are told apart by `GitacreReleaseLabel`, which carries the full label, and by `CFBundleVersion`, which is what Sparkle compares. Neither may repeat.

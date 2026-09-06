@@ -1,4 +1,6 @@
-const releaseEndpoint = "https://api.github.com/repos/shivamx96/gitacre/releases/tags/v1.0.0-beta";
+// The newest published release, prereleases included. /releases/latest cannot be used:
+// it excludes prereleases, and every release so far has been one, so it answers 404.
+const releaseEndpoint = "https://api.github.com/repos/shivamx96/gitacre/releases?per_page=10";
 const releasesEnabled = true;
 
 const previews = {
@@ -95,7 +97,11 @@ document.querySelectorAll("[aria-disabled='true']").forEach((link) => {
 if (releasesEnabled) {
   fetch(releaseEndpoint, { headers: { Accept: "application/vnd.github+json" } })
     .then((response) => response.ok ? response.json() : Promise.reject())
-    .then(enableRelease)
+    .then((releases) => {
+      const published = releases.find((release) => !release.draft);
+      if (!published) return Promise.reject();
+      enableRelease(published);
+    })
     .catch(() => {});
 }
 

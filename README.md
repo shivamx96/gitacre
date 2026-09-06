@@ -10,9 +10,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/shivamx96/gitacre/releases/download/v1.0.0-beta/gitacre-1.0.0-beta.dmg">Download 1.0.0-beta</a>
+  <a href="https://github.com/shivamx96/gitacre/releases/latest">Download</a>
   ·
-  <a href="release-notes/1.0.0-beta.md">Release notes</a>
+  <a href="release-notes/1.0.0-beta.2.md">Release notes</a>
 </p>
 
 <p align="center">
@@ -31,7 +31,7 @@ gitacre keeps the Git work that needs your attention close at hand—without mak
 
 ## Get started
 
-1. [Download the latest beta](https://github.com/shivamx96/gitacre/releases/download/v1.0.0-beta/gitacre-1.0.0-beta.dmg).
+1. [Download the latest beta](https://github.com/shivamx96/gitacre/releases/latest).
 2. Open the disk image and drag `gitacre` into Applications.
 3. Launch gitacre, open Settings, and choose the folders that contain your repositories.
 4. Look for the gitacre icon in the menu bar, or press Option-Command-G.
