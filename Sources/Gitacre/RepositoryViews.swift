@@ -348,10 +348,12 @@ struct RepositoryGlyph: View {
     let status: StatusRole
     @Environment(\.colorScheme) private var colorScheme
 
-    private var image: NSImage? { repository.iconPath.flatMap(NSImage.init(contentsOfFile:)) }
-
     var body: some View {
-        ZStack {
+        // Resolved once per body: referencing a computed property twice used to decode
+        // the icon from disk twice for every row, on every render.
+        let image = RepositoryIconCache.shared.image(atPath: repository.iconPath)
+
+        return ZStack {
             RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .fill(image == nil ? status.color(colorScheme).opacity(0.10) : Color.clear)
             if let image {
