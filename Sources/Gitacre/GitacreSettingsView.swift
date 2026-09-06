@@ -148,6 +148,8 @@ private struct GeneralSettings: View {
                         .background(Color.secondary.opacity(0.09), in: RoundedRectangle(cornerRadius: 5))
                 }
             }
+
+            UpdateSettings()
         }
     }
 }
@@ -353,7 +355,7 @@ private struct AdvancedSettings: View {
     }
 }
 
-private struct SettingsGroup<Content: View>: View {
+struct SettingsGroup<Content: View>: View {
     let title: String
     var subtitle: String? = nil
     @ViewBuilder let content: Content
@@ -379,7 +381,7 @@ private struct SettingsGroup<Content: View>: View {
     }
 }
 
-private struct SettingsRow<Trailing: View>: View {
+struct SettingsRow<Trailing: View>: View {
     let title: String
     var detail: String? = nil
     @ViewBuilder let trailing: Trailing

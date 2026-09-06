@@ -3,7 +3,7 @@ FROM nginx:1.30.4-alpine-slim
 RUN rm -f /usr/share/nginx/html/50x.html /usr/share/nginx/html/index.html
 
 COPY nginx.conf /etc/nginx/nginx.conf
-COPY --chown=nginx:nginx index.html styles.css script.js site.webmanifest /usr/share/nginx/html/
+COPY --chown=nginx:nginx index.html styles.css script.js site.webmanifest appcast.xml /usr/share/nginx/html/
 COPY --chown=nginx:nginx assets/ /usr/share/nginx/html/assets/
 
 USER nginx
