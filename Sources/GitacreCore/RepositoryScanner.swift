@@ -23,13 +23,24 @@ public struct RepositoryScanner: Sendable {
 
     public func scan(roots: [String]) -> [Repository] {
         let checkouts = discoverCheckouts(roots: roots)
-        var representatives: [String: String] = [:]
+
+        // Each checkout costs a `git rev-parse`, and each repository six more git calls.
+        // Run independent checkouts and repositories side by side: the work is spent
+        // waiting on subprocesses, not on this thread.
+        let outcomes = Self.concurrentMap(checkouts) { checkout in
+            (checkout, commonDirectory(for: checkout))
+        }
+
+        var representatives: [(commonDirectory: String, checkout: String)] = []
+        var seenCommonDirectories: Set<String> = []
         var unreadable: [Repository] = []
 
-        for checkout in checkouts {
-            switch commonDirectory(for: checkout) {
+        for (checkout, outcome) in outcomes {
+            switch outcome {
             case let .found(commonDirectory):
-                representatives[commonDirectory] = representatives[commonDirectory] ?? checkout
+                if seenCommonDirectories.insert(commonDirectory).inserted {
+                    representatives.append((commonDirectory, checkout))
+                }
             case let .unreadable(reason):
                 // Without a common directory this checkout cannot be grouped, so it stands
                 // alone under its own path rather than disappearing from the list.
@@ -37,9 +48,10 @@ public struct RepositoryScanner: Sendable {
             }
         }
 
-        let readable = representatives.compactMap { commonDirectory, checkout in
-            makeRepository(commonDirectory: commonDirectory, checkout: checkout)
+        let readable = Self.concurrentMap(representatives) { representative in
+            makeRepository(commonDirectory: representative.commonDirectory, checkout: representative.checkout)
         }
+        .compactMap { $0 }
 
         return (readable + unreadable).sorted {
             if ($0.scanFailure != nil) != ($1.scanFailure != nil) {
@@ -485,6 +497,39 @@ public struct RepositoryScanner: Sendable {
             return $0.path.localizedCaseInsensitiveCompare($1.path) == .orderedAscending
         }.first?.path
     }
+
+    /// Widest set of git subprocesses to keep in flight at once.
+    ///
+    /// The work is dominated by waiting on `git`, not by this process, so running wider
+    /// than the core count still pays. The ceiling keeps a large set of repositories from
+    /// spawning hundreds of subprocesses and thrashing the disk.
+    static var concurrencyWidth: Int {
+        min(12, max(4, ProcessInfo.processInfo.activeProcessorCount * 2))
+    }
+
+    /// Maps `inputs` in parallel while preserving their order.
+    static func concurrentMap<Input: Sendable, Output: Sendable>(
+        _ inputs: [Input],
+        _ transform: @Sendable @escaping (Input) -> Output
+    ) -> [Output] {
+        guard inputs.count > 1 else { return inputs.map(transform) }
+
+        let slots = OrderedSlots<Output>(count: inputs.count)
+        let queue = DispatchQueue(label: "com.shivamx96.gitacre.scan", attributes: .concurrent)
+        let group = DispatchGroup()
+        let gate = DispatchSemaphore(value: concurrencyWidth)
+
+        for (index, input) in inputs.enumerated() {
+            gate.wait()
+            queue.async(group: group) {
+                slots.set(transform(input), at: index)
+                gate.signal()
+            }
+        }
+
+        group.wait()
+        return slots.ordered()
+    }
 }
 
 public struct WorktreeRecord: Equatable, Sendable {
@@ -511,4 +556,26 @@ public struct GitStatus: Equatable, Sendable {
     public var behind = 0
 
     public init() {}
+}
+
+/// Collects results of a parallel map into their original positions.
+private final class OrderedSlots<Element>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [Element?]
+
+    init(count: Int) {
+        storage = Array(repeating: nil, count: count)
+    }
+
+    func set(_ element: Element, at index: Int) {
+        lock.lock()
+        storage[index] = element
+        lock.unlock()
+    }
+
+    func ordered() -> [Element] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage.compactMap { $0 }
+    }
 }
