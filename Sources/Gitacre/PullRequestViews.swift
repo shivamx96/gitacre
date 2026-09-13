@@ -335,7 +335,7 @@ private struct LocalFallbackRow: View {
                         Text(worktree.branch).font(.system(size: 10)).foregroundStyle(.secondary)
                     }
                 }
-                Text(repositoryStatusText(repository: repository, worktree: worktree))
+                Text(repositoryStatusText(repository: repository))
                     .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
