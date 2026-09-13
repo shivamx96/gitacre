@@ -167,6 +167,6 @@ fi
 printf '\nRelease candidate created:\n%s\n%s\n' "$dmg_path" "$checksum_path"
 
 if [[ "$skip_appcast" != "1" ]]; then
-    printf '\nAppcast updated:\n%s\n\nPublish it by uploading the disk image to the v%s release and deploying the website.\n' \
+    printf '\nAppcast updated:\n%s\n\nPublish it by uploading the disk image to the v%s release, then committing and pushing the appcast.\n' \
         "$appcast_path" "$release_label"
 fi

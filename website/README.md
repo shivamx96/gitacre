@@ -28,4 +28,4 @@ docker compose up --build
 
 Set `PORT` if port 8080 is already in use, for example `PORT=18080 docker compose up --build`.
 
-The download buttons remain in a “Public beta soon” state while `releasesEnabled` is `false` in `script.js`. Once the repository is public and the first release exists, enable that flag and the site will automatically link to the latest DMG asset through the public GitHub Releases API.
+The download buttons use the newest published release, prereleases included, through the public GitHub Releases API. Keep their static fallback URLs in `index.html` current so downloads continue to work if that API request fails.
