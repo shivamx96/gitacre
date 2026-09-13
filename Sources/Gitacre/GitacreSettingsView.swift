@@ -141,8 +141,11 @@ private struct GeneralSettings: View {
                 SettingsRow(title: "Refresh automatically", detail: "Every 60 seconds and whenever the panel opens") {
                     Toggle("", isOn: $model.refreshAutomatically).labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
-                SettingsRow(title: "Global shortcut") {
-                    Text("⌥⌘G")
+                SettingsRow(
+                    title: "Global shortcut",
+                    detail: model.isGlobalShortcutRegistered ? "Registered system-wide" : "Unavailable; another app may be using it"
+                ) {
+                    Text(model.isGlobalShortcutRegistered ? GlobalShortcutDefinition.showGitacre.label : "Unavailable")
                         .font(.system(size: 11, weight: .medium))
                         .padding(.horizontal, 8).frame(height: 22)
                         .background(Color.secondary.opacity(0.09), in: RoundedRectangle(cornerRadius: 5))
