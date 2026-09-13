@@ -258,11 +258,7 @@ struct GitacrePanel: View {
 
     private var orderedRepositories: [Repository] {
         if selectedTab == .all { return model.repositories }
-        let uncommitted = model.repositories.filter(\.hasUncommittedWork)
-        let ahead = model.repositories.filter { !$0.hasUncommittedWork && $0.totalAhead > 0 }
-        let behind = model.repositories.filter { !$0.hasUncommittedWork && $0.totalAhead == 0 && $0.totalBehind > 0 }
-        let stashed = model.repositories.filter { !$0.hasUncommittedWork && $0.totalAhead == 0 && $0.totalBehind == 0 && $0.stashCount > 0 }
-        return uncommitted + ahead + behind + stashed
+        return pendingRepositoryDisplayOrder(model.repositories)
     }
 
     private func ensureSelection() {
