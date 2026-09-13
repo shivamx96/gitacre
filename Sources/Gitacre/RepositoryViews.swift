@@ -206,7 +206,7 @@ private struct RepositoryRow: View {
                         Spacer(minLength: 0)
                     }
 
-                    RepositoryStatusLine(repository: repository, worktree: worktree)
+                    RepositoryStatusLine(repository: repository)
                 }
 
                 RepositoryActions(repository: repository, worktree: worktree, emphasized: hovered || selected)
@@ -250,8 +250,10 @@ private struct RepositoryRow: View {
     }
 
     private var repositoryAccessibilityLabel: String {
-        let branch = worktree?.branch ?? "unknown branch"
-        return "\(repository.name), \(branch), \(repositoryStatusText(repository: repository, worktree: worktree))"
+        let context = repository.worktrees.count > 1
+            ? "\(repository.worktrees.count) worktrees"
+            : worktree?.branch ?? "unknown branch"
+        return "\(repository.name), \(context), \(repositoryStatusText(repository: repository))"
     }
 }
 
@@ -406,12 +408,11 @@ private struct BranchChip: View {
 
 private struct RepositoryStatusLine: View {
     let repository: Repository
-    let worktree: Worktree?
 
     var body: some View {
         HStack(spacing: 4) {
-            StatusFactsView(facts: statusFacts(repository: repository, worktree: worktree))
-            if let date = worktree?.lastCommitDate {
+            StatusFactsView(facts: repositoryStatusFacts(repository))
+            if let date = repository.worktrees.compactMap(\.lastCommitDate).max() {
                 Text("·").foregroundStyle(.tertiary)
                 Text(compactRelativeDate(date)).foregroundStyle(.tertiary).fixedSize()
             }
@@ -536,6 +537,43 @@ func statusFacts(repository: Repository?, worktree: Worktree?) -> [StatusFact] {
     if worktree.behind > 0 { facts.append(StatusFact(text: "\(worktree.behind) behind", role: .drift)) }
     if let repository, repository.stashCount > 0 { facts.append(StatusFact(text: "\(repository.stashCount) stashed", role: .drift)) }
     return facts.isEmpty ? [StatusFact(text: "clean · in sync", role: .clean)] : facts
+}
+
+func repositoryStatusFacts(_ repository: Repository) -> [StatusFact] {
+    guard repository.worktrees.count > 1 else {
+        return statusFacts(repository: repository, worktree: repository.worktrees.first)
+    }
+
+    var facts: [StatusFact] = []
+    if repository.scanFailure != nil {
+        facts.append(StatusFact(text: "partly unreadable", role: .blocked))
+    }
+
+    let operations = repository.worktrees.compactMap(\.operation)
+    if operations.count == 1, let operation = operations.first {
+        facts.append(StatusFact(text: "\(operation.displayName) in progress", role: .blocked))
+    } else if operations.count > 1 {
+        facts.append(StatusFact(text: "\(operations.count) operations in progress", role: .blocked))
+    }
+
+    let conflicted = repository.worktrees.reduce(0) { $0 + $1.conflicted }
+    let staged = repository.worktrees.reduce(0) { $0 + $1.staged }
+    let unstaged = repository.worktrees.reduce(0) { $0 + $1.unstaged }
+    let untracked = repository.worktrees.reduce(0) { $0 + $1.untracked }
+
+    if conflicted > 0 { facts.append(StatusFact(text: "\(conflicted) conflict\(conflicted == 1 ? "" : "s")", role: .blocked)) }
+    if staged > 0 { facts.append(StatusFact(text: "\(staged) staged", role: .secondary)) }
+    if unstaged > 0 { facts.append(StatusFact(text: "\(unstaged) modified", role: .secondary)) }
+    if untracked > 0 { facts.append(StatusFact(text: "\(untracked) untracked", role: .secondary)) }
+    if repository.totalAhead > 0 { facts.append(StatusFact(text: "\(repository.totalAhead) ahead", role: .drift)) }
+    if repository.totalBehind > 0 { facts.append(StatusFact(text: "\(repository.totalBehind) behind", role: .drift)) }
+    if repository.stashCount > 0 { facts.append(StatusFact(text: "\(repository.stashCount) stashed", role: .drift)) }
+
+    return facts.isEmpty ? [StatusFact(text: "clean · in sync", role: .clean)] : facts
+}
+
+func repositoryStatusText(repository: Repository) -> String {
+    repositoryStatusFacts(repository).prefix(3).map(\.text).joined(separator: " · ")
 }
 
 func repositoryStatusText(repository: Repository?, worktree: Worktree?) -> String {
