@@ -47,9 +47,19 @@ final class RepositoryStatusTests: XCTestCase {
         )
     }
 
+    func testLockedWorktreeStatusIsVisible() {
+        let worktree = makeWorktree(id: "locked", isPrimary: true, isLocked: true)
+
+        XCTAssertEqual(
+            statusFacts(repository: nil, worktree: worktree).map(\.text),
+            ["clean", "locked"]
+        )
+    }
+
     private func makeWorktree(
         id: String,
         isPrimary: Bool = false,
+        isLocked: Bool = false,
         unstaged: Int = 0,
         ahead: Int = 0,
         upstream: String? = "origin/main"
@@ -61,7 +71,7 @@ final class RepositoryStatusTests: XCTestCase {
             head: "abcdef12",
             isDetached: false,
             isPrimary: isPrimary,
-            isLocked: false,
+            isLocked: isLocked,
             staged: 0,
             unstaged: unstaged,
             untracked: 0,
