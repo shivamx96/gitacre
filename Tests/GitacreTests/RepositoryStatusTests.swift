@@ -23,11 +23,23 @@ final class RepositoryStatusTests: XCTestCase {
         XCTAssertEqual(repositoryStatusText(repository: repository), "2 modified · 1 ahead")
     }
 
+    func testCleanStatusDoesNotClaimRemoteFreshness() {
+        let tracking = makeWorktree(id: "tracking", isPrimary: true)
+        let untrackedBranch = makeWorktree(id: "local", isPrimary: true, upstream: nil)
+
+        XCTAssertEqual(statusFacts(repository: nil, worktree: tracking).map(\.text), ["clean"])
+        XCTAssertEqual(
+            statusFacts(repository: nil, worktree: untrackedBranch).map(\.text),
+            ["clean", "no upstream"]
+        )
+    }
+
     private func makeWorktree(
         id: String,
         isPrimary: Bool = false,
         unstaged: Int = 0,
-        ahead: Int = 0
+        ahead: Int = 0,
+        upstream: String? = "origin/main"
     ) -> Worktree {
         Worktree(
             id: id,
@@ -44,7 +56,7 @@ final class RepositoryStatusTests: XCTestCase {
             changedFiles: unstaged,
             ahead: ahead,
             behind: 0,
-            upstream: "origin/main",
+            upstream: upstream,
             operation: nil,
             lastCommitDate: nil
         )
