@@ -21,7 +21,8 @@ struct RepositoryListView: View {
                 RepositorySection(title: "UNREADABLE", repositories: unreadable),
                 RepositorySection(title: "UNCOMMITTED", repositories: readable.filter { $0.hasUncommittedWork }),
                 RepositorySection(title: "AHEAD OF REMOTE", repositories: readable.filter { !$0.hasUncommittedWork && $0.totalAhead > 0 }),
-                RepositorySection(title: "STASHED", repositories: readable.filter { !$0.hasUncommittedWork && $0.totalAhead == 0 && $0.stashCount > 0 })
+                RepositorySection(title: "BEHIND REMOTE", repositories: readable.filter { !$0.hasUncommittedWork && $0.totalAhead == 0 && $0.totalBehind > 0 }),
+                RepositorySection(title: "STASHED", repositories: readable.filter { !$0.hasUncommittedWork && $0.totalAhead == 0 && $0.totalBehind == 0 && $0.stashCount > 0 })
             ].filter { !$0.repositories.isEmpty }
         }
 
