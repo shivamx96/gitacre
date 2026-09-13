@@ -37,7 +37,7 @@ struct RepositoryListView: View {
                 EmptyStateView(
                     symbol: "checkmark",
                     title: "Everything is committed",
-                    message: "All \(model.repositories.count) repositories are clean and in sync with their remotes.",
+                    message: "No local changes or other known attention items were found in \(model.repositories.count) repositories.",
                     actionTitle: "View all repositories",
                     action: emptyAction
                 )
@@ -524,7 +524,7 @@ func statusFacts(repository: Repository?, worktree: Worktree?) -> [StatusFact] {
     }
     guard let worktree else {
         if let repository, repository.stashCount > 0 { return [StatusFact(text: "\(repository.stashCount) stashed", role: .drift)] }
-        return [StatusFact(text: "clean · in sync", role: .clean)]
+        return [StatusFact(text: "clean", role: .clean)]
     }
     var facts: [StatusFact] = []
     if let repository, repository.scanFailure != nil { facts.append(StatusFact(text: "partly unreadable", role: .blocked)) }
@@ -536,7 +536,11 @@ func statusFacts(repository: Repository?, worktree: Worktree?) -> [StatusFact] {
     if worktree.ahead > 0 { facts.append(StatusFact(text: "\(worktree.ahead) ahead", role: .drift)) }
     if worktree.behind > 0 { facts.append(StatusFact(text: "\(worktree.behind) behind", role: .drift)) }
     if let repository, repository.stashCount > 0 { facts.append(StatusFact(text: "\(repository.stashCount) stashed", role: .drift)) }
-    return facts.isEmpty ? [StatusFact(text: "clean · in sync", role: .clean)] : facts
+    if facts.isEmpty { facts.append(StatusFact(text: "clean", role: .clean)) }
+    if !worktree.isDetached && worktree.upstream == nil {
+        facts.append(StatusFact(text: "no upstream", role: .secondary))
+    }
+    return facts
 }
 
 func repositoryStatusFacts(_ repository: Repository) -> [StatusFact] {
@@ -569,7 +573,14 @@ func repositoryStatusFacts(_ repository: Repository) -> [StatusFact] {
     if repository.totalBehind > 0 { facts.append(StatusFact(text: "\(repository.totalBehind) behind", role: .drift)) }
     if repository.stashCount > 0 { facts.append(StatusFact(text: "\(repository.stashCount) stashed", role: .drift)) }
 
-    return facts.isEmpty ? [StatusFact(text: "clean · in sync", role: .clean)] : facts
+    if facts.isEmpty { facts.append(StatusFact(text: "clean", role: .clean)) }
+    let withoutUpstream = repository.worktrees.filter { !$0.isDetached && $0.upstream == nil }.count
+    if withoutUpstream == 1 {
+        facts.append(StatusFact(text: "1 without upstream", role: .secondary))
+    } else if withoutUpstream > 1 {
+        facts.append(StatusFact(text: "\(withoutUpstream) without upstream", role: .secondary))
+    }
+    return facts
 }
 
 func repositoryStatusText(repository: Repository) -> String {

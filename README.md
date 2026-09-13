@@ -48,6 +48,8 @@ The Pull Requests view is optional. To use it, install the [GitHub CLI](https://
 
 Repository scanning happens locally. For pull requests, gitacre invokes the official GitHub CLI and reuses its active `github.com` session; it does not read or store your authentication token.
 
+Repository scans never fetch or write. Ahead and behind counts reflect the remote-tracking references already present on your Mac.
+
 ## Build from source
 
 Building gitacre requires Xcode 16 or newer.
