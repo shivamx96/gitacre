@@ -11,26 +11,7 @@ struct RepositoryListView: View {
     var emptyAction: (() -> Void)?
 
     private var sections: [RepositorySection] {
-        // A repository git could not read reports no worktrees, so it would otherwise land
-        // in CLEAN and claim to be in sync. It gets its own section instead.
-        let unreadable = model.repositories.filter { !$0.isReadable }
-        let readable = model.repositories.filter(\.isReadable)
-
-        if showsPendingOnly {
-            return [
-                RepositorySection(title: "UNREADABLE", repositories: unreadable),
-                RepositorySection(title: "UNCOMMITTED", repositories: readable.filter { $0.hasUncommittedWork }),
-                RepositorySection(title: "AHEAD OF REMOTE", repositories: readable.filter { !$0.hasUncommittedWork && $0.totalAhead > 0 }),
-                RepositorySection(title: "BEHIND REMOTE", repositories: readable.filter { !$0.hasUncommittedWork && $0.totalAhead == 0 && $0.totalBehind > 0 }),
-                RepositorySection(title: "STASHED", repositories: readable.filter { !$0.hasUncommittedWork && $0.totalAhead == 0 && $0.totalBehind == 0 && $0.stashCount > 0 })
-            ].filter { !$0.repositories.isEmpty }
-        }
-
-        return [
-            RepositorySection(title: "UNREADABLE", repositories: unreadable),
-            RepositorySection(title: "ACTIVE", repositories: readable.filter(\.hasPendingWork)),
-            RepositorySection(title: "CLEAN", repositories: readable.filter { !$0.hasPendingWork })
-        ].filter { !$0.repositories.isEmpty }
+        repositorySections(repositories: model.repositories, showsPendingOnly: showsPendingOnly)
     }
 
     var body: some View {
@@ -106,10 +87,37 @@ struct RepositoryListView: View {
     }
 }
 
-private struct RepositorySection: Identifiable {
+struct RepositorySection: Identifiable {
     let title: String
     let repositories: [Repository]
     var id: String { title }
+}
+
+func repositorySections(repositories: [Repository], showsPendingOnly: Bool) -> [RepositorySection] {
+    // A repository can still have readable worktrees when one linked worktree fails.
+    // Classify every scan failure explicitly so it cannot disappear from the Pending tab.
+    let scanIssues = repositories.filter { $0.scanFailure != nil }
+    let healthy = repositories.filter { $0.scanFailure == nil }
+
+    if showsPendingOnly {
+        return [
+            RepositorySection(title: "SCAN ISSUES", repositories: scanIssues),
+            RepositorySection(title: "UNCOMMITTED", repositories: healthy.filter { $0.hasUncommittedWork }),
+            RepositorySection(title: "AHEAD OF REMOTE", repositories: healthy.filter { !$0.hasUncommittedWork && $0.totalAhead > 0 }),
+            RepositorySection(title: "BEHIND REMOTE", repositories: healthy.filter { !$0.hasUncommittedWork && $0.totalAhead == 0 && $0.totalBehind > 0 }),
+            RepositorySection(title: "STASHED", repositories: healthy.filter { !$0.hasUncommittedWork && $0.totalAhead == 0 && $0.totalBehind == 0 && $0.stashCount > 0 })
+        ].filter { !$0.repositories.isEmpty }
+    }
+
+    return [
+        RepositorySection(title: "SCAN ISSUES", repositories: scanIssues),
+        RepositorySection(title: "ACTIVE", repositories: healthy.filter(\.hasPendingWork)),
+        RepositorySection(title: "CLEAN", repositories: healthy.filter { !$0.hasPendingWork })
+    ].filter { !$0.repositories.isEmpty }
+}
+
+func pendingRepositoryDisplayOrder(_ repositories: [Repository]) -> [Repository] {
+    repositorySections(repositories: repositories, showsPendingOnly: true).flatMap(\.repositories)
 }
 
 private struct RepositorySectionView: View {
