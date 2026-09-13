@@ -253,7 +253,7 @@ private struct RepositoryRow: View {
         let context = repository.worktrees.count > 1
             ? "\(repository.worktrees.count) worktrees"
             : worktree?.branch ?? "unknown branch"
-        return "\(repository.name), \(context), \(repositoryStatusText(repository: repository))"
+        return "\(repository.name), \(context), \(statusFactsAccessibilityText(repositoryStatusFacts(repository)))"
     }
 }
 
@@ -330,6 +330,7 @@ private struct WorktreeRow: View {
                     Text("·")
                     Text(repositoryStatusText(repository: nil, worktree: worktree))
                         .lineLimit(1)
+                        .accessibilityLabel(statusFactsAccessibilityText(statusFacts(repository: nil, worktree: worktree)))
                 }
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
@@ -510,12 +511,32 @@ struct StatusFactsView: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(Array(facts.prefix(3).enumerated()), id: \.offset) { index, fact in
+            ForEach(Array(visibleStatusFacts(facts).enumerated()), id: \.offset) { index, fact in
                 if index > 0 { Text("·").foregroundStyle(.tertiary) }
                 Text(fact.text).foregroundStyle(fact.role.color(colorScheme))
             }
+            if statusFactOverflowCount(facts) > 0 {
+                Text("·").foregroundStyle(.tertiary)
+                Text("+\(statusFactOverflowCount(facts))")
+                    .foregroundStyle(.tertiary)
+                    .help(statusFactsAccessibilityText(facts))
+            }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(statusFactsAccessibilityText(facts))
     }
+}
+
+func visibleStatusFacts(_ facts: [StatusFact], limit: Int = 3) -> [StatusFact] {
+    Array(facts.prefix(limit))
+}
+
+func statusFactOverflowCount(_ facts: [StatusFact], limit: Int = 3) -> Int {
+    max(0, facts.count - limit)
+}
+
+func statusFactsAccessibilityText(_ facts: [StatusFact]) -> String {
+    facts.map(\.text).joined(separator: ", ")
 }
 
 func statusFacts(repository: Repository?, worktree: Worktree?) -> [StatusFact] {
@@ -584,11 +605,17 @@ func repositoryStatusFacts(_ repository: Repository) -> [StatusFact] {
 }
 
 func repositoryStatusText(repository: Repository) -> String {
-    repositoryStatusFacts(repository).prefix(3).map(\.text).joined(separator: " · ")
+    compactStatusFactsText(repositoryStatusFacts(repository))
 }
 
 func repositoryStatusText(repository: Repository?, worktree: Worktree?) -> String {
-    statusFacts(repository: repository, worktree: worktree).prefix(3).map(\.text).joined(separator: " · ")
+    compactStatusFactsText(statusFacts(repository: repository, worktree: worktree))
+}
+
+private func compactStatusFactsText(_ facts: [StatusFact]) -> String {
+    let visible = visibleStatusFacts(facts).map(\.text)
+    let overflow = statusFactOverflowCount(facts)
+    return (overflow > 0 ? visible + ["+\(overflow)"] : visible).joined(separator: " · ")
 }
 
 private func relativeWorktreePath(_ path: String, repository: Repository) -> String {
