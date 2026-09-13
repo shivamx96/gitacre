@@ -133,7 +133,7 @@ public struct Worktree: Identifiable, Equatable, Sendable {
     }
 
     public var hasPendingWork: Bool {
-        changedFiles > 0 || ahead > 0 || operation != nil
+        changedFiles > 0 || ahead > 0 || behind > 0 || operation != nil
     }
 }
 
