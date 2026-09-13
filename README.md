@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://gitacre.shivamx96.com">Download</a>
   ·
-  <a href="release-notes/1.0.0-beta.3.md">Release notes</a>
+  <a href="release-notes/1.0.0-beta.4.md">Release notes</a>
 </p>
 
 <p align="center">

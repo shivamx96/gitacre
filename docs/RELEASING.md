@@ -40,7 +40,7 @@ From a clean checkout on `main`:
 ```sh
 GITACRE_SIGNING_IDENTITY="Developer ID Application: Shivam Shekhar (RP9BF8YGPZ)" \
 GITACRE_SPARKLE_PUBLIC_KEY="$(.build/artifacts/sparkle/Sparkle/bin/generate_keys -p)" \
-  scripts/release.sh 1.0.0-beta.3 3
+  scripts/release.sh 1.0.0-beta.4 4
 ```
 
 The script builds a universal `arm64` and `x86_64` app, embeds and signs `Sparkle.framework`, enables the hardened runtime, submits the app and disk image to Apple's notary service, staples both tickets, runs Gatekeeper and disk-image verification, and writes a SHA-256 checksum under `dist/`.
@@ -79,14 +79,14 @@ Publication is intentionally manual. Review the release notes and obtain approva
 After approval:
 
 ```sh
-git tag -a v1.0.0-beta.3 -m "gitacre 1.0.0-beta.3"
-git push origin main v1.0.0-beta.3
-gh release create v1.0.0-beta.3 \
-  dist/gitacre-1.0.0-beta.3.dmg \
-  dist/gitacre-1.0.0-beta.3.dmg.sha256 \
+git tag -a v1.0.0-beta.4 -m "gitacre 1.0.0-beta.4"
+git push origin main v1.0.0-beta.4
+gh release create v1.0.0-beta.4 \
+  dist/gitacre-1.0.0-beta.4.dmg \
+  dist/gitacre-1.0.0-beta.4.dmg.sha256 \
   --prerelease \
-  --title "gitacre 1.0.0-beta.3" \
-  --notes-file release-notes/1.0.0-beta.3.md
+  --title "gitacre 1.0.0-beta.4" \
+  --notes-file release-notes/1.0.0-beta.4.md
 ```
 
 Once the release and public repository are available, verify the download link and deploy the website container again. The site reads the newest published release from the GitHub API, so it needs no edit per release. It deliberately uses the release *list* rather than `/releases/latest`, which excludes prereleases and answers 404 while every release is a prerelease.
@@ -97,7 +97,7 @@ Landing `website/appcast.xml` on `main` is what actually ships the update. Nothi
 
 ```sh
 git add website/appcast.xml release-notes/
-git commit -m "Publish 1.0.0-beta.3 to the update feed"
+git commit -m "Publish 1.0.0-beta.4 to the update feed"
 git push origin main
 curl -sSf https://raw.githubusercontent.com/shivamx96/gitacre/main/website/appcast.xml | head
 ```
@@ -106,7 +106,7 @@ Check that the newest `<item>` carries the right `sparkle:version`, that its `en
 
 ```sh
 .build/artifacts/sparkle/Sparkle/bin/sign_update --verify \
-  dist/gitacre-1.0.0-beta.3.dmg "<signature from the appcast>"
+  dist/gitacre-1.0.0-beta.4.dmg "<signature from the appcast>"
 ```
 
 ## Bootstrapping note
