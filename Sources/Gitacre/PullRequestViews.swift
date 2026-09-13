@@ -337,6 +337,7 @@ private struct LocalFallbackRow: View {
                 }
                 Text(repositoryStatusText(repository: repository))
                     .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+                    .accessibilityLabel(statusFactsAccessibilityText(repositoryStatusFacts(repository)))
             }
             Spacer()
             if let worktree {

@@ -34,6 +34,19 @@ final class RepositoryStatusTests: XCTestCase {
         )
     }
 
+    func testStatusOverflowIsVisibleWithoutHidingFactsFromAccessibility() {
+        let facts = ["conflict", "staged", "modified", "ahead", "stashed"].map {
+            StatusFact(text: $0, role: .secondary)
+        }
+
+        XCTAssertEqual(visibleStatusFacts(facts).map(\.text), ["conflict", "staged", "modified"])
+        XCTAssertEqual(statusFactOverflowCount(facts), 2)
+        XCTAssertEqual(
+            statusFactsAccessibilityText(facts),
+            "conflict, staged, modified, ahead, stashed"
+        )
+    }
+
     private func makeWorktree(
         id: String,
         isPrimary: Bool = false,
