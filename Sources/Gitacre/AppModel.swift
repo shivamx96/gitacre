@@ -19,6 +19,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var terminalApplications: [TerminalApplication] = []
     @Published private(set) var lastRepositoryRefresh: Date?
     @Published private(set) var isLaunchAtLoginEnabled: Bool
+    @Published private(set) var isGlobalShortcutRegistered = false
 
     @Published var roots: [String] { didSet { save(roots, for: Keys.roots) } }
     @Published var preferredGitHubCLIPath: String { didSet { save(preferredGitHubCLIPath, for: Keys.ghPath) } }
@@ -265,6 +266,10 @@ final class AppModel: ObservableObject {
             NSSound.beep()
         }
         isLaunchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+    }
+
+    func setGlobalShortcutRegistered(_ registered: Bool) {
+        isGlobalShortcutRegistered = registered
     }
 
     func requestReviewNotifications(_ enabled: Bool) {

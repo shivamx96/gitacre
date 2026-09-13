@@ -32,8 +32,7 @@ final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private var settingsWindow: NSWindow?
-    private var globalShortcutMonitor: Any?
-    private var localShortcutMonitor: Any?
+    private var globalShortcut: GlobalShortcutRegistrar?
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -57,8 +56,7 @@ final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        if let globalShortcutMonitor { NSEvent.removeMonitor(globalShortcutMonitor) }
-        if let localShortcutMonitor { NSEvent.removeMonitor(localShortcutMonitor) }
+        globalShortcut?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -82,7 +80,7 @@ final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         item.button?.target = self
         item.button?.action = #selector(togglePopover)
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        item.button?.toolTip = "gitacre — ⌥⌘G"
+        item.button?.toolTip = "gitacre"
         statusItem = item
         updateStatusItem()
     }
@@ -117,20 +115,11 @@ final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     }
 
     private func configureGlobalShortcut() {
-        globalShortcutMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard Self.isGlobalShortcut(event) else { return }
-            Task { @MainActor in self?.showPopover() }
-        }
-        localShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard Self.isGlobalShortcut(event) else { return event }
+        globalShortcut = GlobalShortcutRegistrar(definition: .showGitacre) { [weak self] in
             self?.showPopover()
-            return nil
         }
-    }
-
-    private static func isGlobalShortcut(_ event: NSEvent) -> Bool {
-        event.charactersIgnoringModifiers?.lowercased() == "g"
-            && event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.option, .command]
+        model.setGlobalShortcutRegistered(globalShortcut != nil)
+        updateStatusItem()
     }
 
     @objc private func togglePopover() {
@@ -188,6 +177,9 @@ final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             ? " \(model.attentionCount)"
             : ""
         button.alphaValue = model.dimIconWhenIdle && model.attentionCount == 0 ? 0.58 : 1
+        button.toolTip = model.isGlobalShortcutRegistered
+            ? "gitacre — \(GlobalShortcutDefinition.showGitacre.label)"
+            : "gitacre"
         button.setAccessibilityLabel(menuBarAccessibilityLabel)
     }
 
