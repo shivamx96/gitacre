@@ -320,6 +320,13 @@ private struct WorktreeRow: View {
                             .tracking(0.4)
                             .foregroundStyle(.tertiary)
                     }
+                    if worktree.isLocked {
+                        Text("LOCKED")
+                            .font(.system(size: 8, weight: .semibold))
+                            .tracking(0.4)
+                            .foregroundStyle(.tertiary)
+                            .help("This worktree is protected by git worktree lock")
+                    }
                     Spacer(minLength: 0)
                 }
                 HStack(spacing: 4) {
@@ -558,6 +565,7 @@ func statusFacts(repository: Repository?, worktree: Worktree?) -> [StatusFact] {
     if worktree.behind > 0 { facts.append(StatusFact(text: "\(worktree.behind) behind", role: .drift)) }
     if let repository, repository.stashCount > 0 { facts.append(StatusFact(text: "\(repository.stashCount) stashed", role: .drift)) }
     if facts.isEmpty { facts.append(StatusFact(text: "clean", role: .clean)) }
+    if worktree.isLocked { facts.append(StatusFact(text: "locked", role: .secondary)) }
     if !worktree.isDetached && worktree.upstream == nil {
         facts.append(StatusFact(text: "no upstream", role: .secondary))
     }
@@ -595,6 +603,12 @@ func repositoryStatusFacts(_ repository: Repository) -> [StatusFact] {
     if repository.stashCount > 0 { facts.append(StatusFact(text: "\(repository.stashCount) stashed", role: .drift)) }
 
     if facts.isEmpty { facts.append(StatusFact(text: "clean", role: .clean)) }
+    let locked = repository.worktrees.filter(\.isLocked).count
+    if locked == 1 {
+        facts.append(StatusFact(text: "1 locked", role: .secondary))
+    } else if locked > 1 {
+        facts.append(StatusFact(text: "\(locked) locked", role: .secondary))
+    }
     let withoutUpstream = repository.worktrees.filter { !$0.isDetached && $0.upstream == nil }.count
     if withoutUpstream == 1 {
         facts.append(StatusFact(text: "1 without upstream", role: .secondary))
