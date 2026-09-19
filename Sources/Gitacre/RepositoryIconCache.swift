@@ -1,11 +1,12 @@
 import AppKit
 
-/// Keeps decoded repository icons in memory for the lifetime of a scan.
+/// Keeps decoded repository icons in memory across status refreshes.
 ///
 /// `RepositoryGlyph` is evaluated for every visible row, and SwiftUI re-evaluates a body
 /// far more often than the data behind it changes — every hover, selection, scroll step,
 /// and published property. Reading and decoding the icon inside `body` therefore put
 /// synchronous disk reads on the main thread in the middle of a scrolling list.
+/// Discovery invalidates the cache; ordinary status refreshes reuse decoded images.
 @MainActor
 final class RepositoryIconCache {
     static let shared = RepositoryIconCache()
@@ -29,9 +30,9 @@ final class RepositoryIconCache {
         return image
     }
 
-    /// Drops everything so a rescan picks up icons that were added, replaced, or removed.
+    /// Drops everything so a discovery scan picks up icons that were added, replaced, or removed.
     ///
-    /// Bounds staleness to one scan interval without paying a `stat` on every render.
+    /// Bounds staleness to one discovery interval without paying a `stat` on every render.
     func invalidate() {
         images.removeAll(keepingCapacity: true)
         unreadablePaths.removeAll(keepingCapacity: true)
