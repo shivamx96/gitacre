@@ -53,8 +53,20 @@ public actor RefreshCoordinator<Request: Sendable, Value: Sendable> {
                 generation: generation,
                 request: coalesce(pending.request, request)
             )
-        } else if let inFlight, covers(inFlight.request, request) {
-            // The active run already includes this request; just wait for it.
+        } else if let inFlight {
+            if covers(inFlight.request, request) {
+                // The active run already includes this request; just wait for it.
+            } else {
+                // The active run is now superseded and its result will be discarded, so
+                // fold its request into the follow-up. Dropping it here would lose the
+                // work it represents — a targeted status refresh of another repository,
+                // or a discovery the new configuration no longer covers.
+                generation += 1
+                pending = PendingRequest(
+                    generation: generation,
+                    request: coalesce(inFlight.request, request)
+                )
+            }
         } else {
             generation += 1
             pending = PendingRequest(generation: generation, request: request)

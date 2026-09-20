@@ -246,7 +246,7 @@ struct GitacrePanel: View {
     private func refreshSelectedTab() {
         Task {
             if selectedTab == .pullRequests { await model.refreshGitHub() }
-            else { await model.refreshRepositories(scope: .status()) }
+            else { await model.refreshRepositories() }
         }
     }
 

@@ -80,12 +80,15 @@ public struct RepositoryRefreshRequest: Equatable, Sendable {
         )
     }
 
-    /// A discovery already in flight includes current git status for this configuration.
+    /// A discovery already in flight satisfies any request for the same configuration:
+    /// it rebuilds the whole list and reads current git status for every repository it
+    /// finds, which is a superset of what a status refresh — or a second identical
+    /// discovery — would produce.
     ///
     /// A status run never covers another request: it may be stale relative to a newer
     /// status snapshot, and it cannot discover checkouts a later discovery needs.
     public func covers(_ next: Self) -> Bool {
-        configuration == next.configuration && scope.isDiscovery && !next.scope.isDiscovery
+        configuration == next.configuration && scope.isDiscovery
     }
 }
 

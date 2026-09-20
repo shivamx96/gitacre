@@ -73,7 +73,10 @@ final class RepositoryRefreshTests: XCTestCase {
         XCTAssertTrue(discovery.covers(status))
         XCTAssertFalse(status.covers(discovery))
         XCTAssertFalse(discovery.covers(otherRoots))
-        XCTAssertFalse(discovery.covers(discovery))
+        XCTAssertTrue(
+            discovery.covers(discovery),
+            "a running discovery must absorb an identical one instead of restarting it"
+        )
     }
 
     func testStatusRefreshUpdatesMatchingRepositoriesWithoutDiscoveringNewOnes() throws {
@@ -111,6 +114,34 @@ final class RepositoryRefreshTests: XCTestCase {
         let statusOnly = scanner.refreshStatus(of: targeted)
         XCTAssertEqual(Set(statusOnly.map(\.name)), ["alpha", "beta"])
         XCTAssertEqual(Set(scanner.scan(roots: [root.path]).map(\.name)), ["alpha", "beta", "gamma"])
+    }
+
+    func testStatusRefreshDropsRepositoriesThatNoLongerExist() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let alpha = root.appendingPathComponent("alpha", isDirectory: true)
+        let beta = root.appendingPathComponent("beta", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let runner = ProcessRunner()
+        for checkout in [alpha, beta] {
+            try FileManager.default.createDirectory(at: checkout, withIntermediateDirectories: true)
+            XCTAssertTrue(runner.run(executable: "/usr/bin/git", arguments: ["-C", checkout.path, "init", "-q"]).succeeded)
+        }
+
+        let scanner = RepositoryScanner()
+        let initial = scanner.scan(roots: [root.path])
+        XCTAssertEqual(Set(initial.map(\.name)), ["alpha", "beta"])
+
+        try FileManager.default.removeItem(at: alpha)
+
+        let refreshed = scanner.refreshStatus(of: initial)
+        XCTAssertEqual(refreshed.map(\.name), ["beta"])
+        XCTAssertTrue(
+            refreshed.allSatisfy { $0.scanFailure == nil },
+            "a deleted repository must disappear rather than become a scan failure"
+        )
     }
 
     func testStatusRefreshPreservesDiscoveredIconPaths() throws {

@@ -75,7 +75,8 @@ public struct RepositoryScanner: Sendable {
     /// Re-reads git status for known repositories without walking monitored roots.
     ///
     /// Repositories that do not match `paths` are left unchanged. A `nil` path set
-    /// refreshes every known repository. Newly created checkouts are not discovered.
+    /// refreshes every known repository. Newly created checkouts are not discovered,
+    /// but repositories that have disappeared from disk are dropped.
     public func refreshStatus(
         of repositories: [Repository],
         matching paths: Set<String>? = nil
@@ -98,16 +99,30 @@ public struct RepositoryScanner: Sendable {
         }
 
         var result = repositories
+        var removed = Set<Int>()
         for (index, repository) in refreshed {
-            result[index] = repository
+            if let repository {
+                result[index] = repository
+            } else {
+                removed.insert(index)
+            }
+        }
+        if !removed.isEmpty {
+            result = result.enumerated()
+                .filter { !removed.contains($0.offset) }
+                .map(\.element)
         }
         return Self.sorted(result)
     }
 
-    private func refresh(_ repository: Repository) -> Repository {
+    /// Returns `nil` when the repository no longer exists on disk, so a deleted checkout
+    /// is dropped from the list instead of lingering as a scan failure that counts
+    /// towards the attention badge until the next discovery.
+    private func refresh(_ repository: Repository) -> Repository? {
         let checkout = repository.worktrees.first(where: \.isPrimary)?.path
             ?? repository.worktrees.first?.path
             ?? repository.commonDirectory
+        guard FileManager.default.fileExists(atPath: repository.commonDirectory) else { return nil }
         return makeRepository(
             commonDirectory: repository.commonDirectory,
             checkout: checkout,

@@ -148,8 +148,13 @@ final class AppModel: ObservableObject {
         return "gitacre \(version) (build \(build))"
     }
 
-    func refreshAll() async {
-        async let repositories: Void = refreshRepositories(scope: .status())
+    /// Refreshes repositories and GitHub together.
+    ///
+    /// Defaults to discovery so every explicit "refresh" control picks up newly cloned
+    /// repositories. Ambient callers that fire on their own — opening the popover —
+    /// pass `.status()` to avoid re-walking the monitored roots each time.
+    func refreshAll(scope: RepositoryRefreshScope = .discovery) async {
+        async let repositories: Void = refreshRepositories(scope: scope)
         async let github: Void = refreshGitHub()
         _ = await (repositories, github)
     }
