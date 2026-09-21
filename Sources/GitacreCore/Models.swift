@@ -69,6 +69,18 @@ public struct Repository: Identifiable, Equatable, Sendable {
     public var hasUncommittedWork: Bool {
         worktrees.contains { $0.changedFiles > 0 || $0.operation != nil }
     }
+
+    /// True when `path` is this repository's git directory, a worktree, a parent of
+    /// either, or a file inside either. Used to target a status refresh from a path event.
+    public func isAffected(byChangedPath path: String) -> Bool {
+        let changed = URL(fileURLWithPath: path).standardizedFileURL.path
+        return ([commonDirectory] + worktrees.map(\.path)).contains { directory in
+            let root = URL(fileURLWithPath: directory).standardizedFileURL.path
+            return changed == root
+                || changed.hasPrefix(root + "/")
+                || root.hasPrefix(changed + "/")
+        }
+    }
 }
 
 public struct Worktree: Identifiable, Equatable, Sendable {

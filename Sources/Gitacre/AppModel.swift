@@ -46,6 +46,19 @@ final class AppModel: ObservableObject {
     private var repositoryRefreshTimer: AnyCancellable?
     private var pullRequestRefreshTimer: AnyCancellable?
     private var knownReviewRequestIDs = Set<String>()
+    private var repositoryRefreshCount = 0
+    private let repositoryRefresh = RefreshCoordinator<RepositoryRefreshRequest, RepositoryRefreshOutcome>(
+        coalesce: { $0.coalescing($1) },
+        covers: { $0.covers($1) },
+        perform: { request in
+            await Task.detached(priority: .utility) {
+                RepositoryRefreshOutcome(
+                    repositories: RepositoryScanner.run(request),
+                    scope: request.scope
+                )
+            }.value
+        }
+    )
 
     private enum Keys {
         static let roots = "repositoryRoots"
@@ -135,31 +148,59 @@ final class AppModel: ObservableObject {
         return "gitacre \(version) (build \(build))"
     }
 
-    func refreshAll() async {
-        async let repositories: Void = refreshRepositories()
+    /// Refreshes repositories and GitHub together.
+    ///
+    /// Defaults to discovery so every explicit "refresh" control picks up newly cloned
+    /// repositories. Ambient callers that fire on their own — opening the popover —
+    /// pass `.status()` to avoid re-walking the monitored roots each time.
+    func refreshAll(scope: RepositoryRefreshScope = .discovery) async {
+        async let repositories: Void = refreshRepositories(scope: scope)
         async let github: Void = refreshGitHub()
         _ = await (repositories, github)
     }
 
-    func refreshRepositories() async {
-        guard !isLoadingRepositories else { return }
+    /// Discovers repositories under monitored roots, or re-reads status for known ones.
+    ///
+    /// Overlapping calls coalesce into one follow-up instead of being dropped. A result
+    /// is published only when no newer request has superseded it.
+    func refreshRepositories(scope: RepositoryRefreshScope = .discovery) async {
+        let resolved = resolvedScope(scope)
+        repositoryRefreshCount += 1
         isLoadingRepositories = true
-        let scannedRoots = roots
-        let depth = maximumScanDepth
-        let includesWorktrees = includeWorktrees
-        let ignored = ignoredDirectories
-        let result = await Task.detached(priority: .utility) {
-            RepositoryScanner(
-                maximumDepth: depth,
-                includeLinkedWorktrees: includesWorktrees,
-                ignoredDirectoryNames: ignored
-            ).scan(roots: scannedRoots)
-        }.value
-        RepositoryIconCache.shared.invalidate()
-        repositories = result
+        defer {
+            repositoryRefreshCount -= 1
+            if repositoryRefreshCount == 0 {
+                isLoadingRepositories = false
+            }
+        }
+
+        let request = RepositoryRefreshRequest(
+            configuration: ScanConfiguration(
+                roots: roots,
+                maximumDepth: maximumScanDepth,
+                includeLinkedWorktrees: includeWorktrees,
+                ignoredDirectoryNames: ignoredDirectories
+            ),
+            scope: resolved,
+            knownRepositories: resolved.isDiscovery ? [] : repositories
+        )
+        let outcome = await repositoryRefresh.submit(request)
+        guard !Task.isCancelled else { return }
+
+        if outcome.scope.isDiscovery {
+            RepositoryIconCache.shared.invalidate()
+        }
+        repositories = outcome.repositories
         lastRepositoryRefresh = Date()
-        isLoadingRepositories = false
         hasLoadedRepositories = true
+    }
+
+    /// Status refreshes have nothing to work from until the first discovery finishes.
+    private func resolvedScope(_ scope: RepositoryRefreshScope) -> RepositoryRefreshScope {
+        if case .status = scope, !hasLoadedRepositories {
+            return .discovery
+        }
+        return scope
     }
 
     func refreshGitHub() async {

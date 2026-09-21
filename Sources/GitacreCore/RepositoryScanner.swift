@@ -53,7 +53,90 @@ public struct RepositoryScanner: Sendable {
         }
         .compactMap { $0 }
 
-        return (readable + unreadable).sorted {
+        return Self.sorted(readable + unreadable)
+    }
+
+    /// Runs a refresh request: full discovery of monitored roots, or status-only
+    /// refresh of already-known repositories.
+    public static func run(_ request: RepositoryRefreshRequest) -> [Repository] {
+        let scanner = RepositoryScanner(
+            maximumDepth: request.configuration.maximumDepth,
+            includeLinkedWorktrees: request.configuration.includeLinkedWorktrees,
+            ignoredDirectoryNames: request.configuration.ignoredDirectoryNames
+        )
+        switch request.scope {
+        case .discovery:
+            return scanner.scan(roots: request.configuration.roots)
+        case let .status(paths):
+            return scanner.refreshStatus(of: request.knownRepositories, matching: paths)
+        }
+    }
+
+    /// Re-reads git status for known repositories without walking monitored roots.
+    ///
+    /// Repositories that do not match `paths` are left unchanged. A `nil` path set
+    /// refreshes every known repository. Newly created checkouts are not discovered,
+    /// but repositories that have disappeared from disk are dropped.
+    public func refreshStatus(
+        of repositories: [Repository],
+        matching paths: Set<String>? = nil
+    ) -> [Repository] {
+        guard !repositories.isEmpty else { return [] }
+
+        let selected: [(Int, Repository)]
+        if let paths {
+            selected = repositories.enumerated().compactMap { index, repository in
+                paths.contains { repository.isAffected(byChangedPath: $0) }
+                    ? (index, repository)
+                    : nil
+            }
+        } else {
+            selected = repositories.enumerated().map { ($0.offset, $0.element) }
+        }
+
+        let refreshed = Self.concurrentMap(selected) { pair in
+            (pair.0, refresh(pair.1))
+        }
+
+        var result = repositories
+        var removed = Set<Int>()
+        for (index, repository) in refreshed {
+            if let repository {
+                result[index] = repository
+            } else {
+                removed.insert(index)
+            }
+        }
+        if !removed.isEmpty {
+            result = result.enumerated()
+                .filter { !removed.contains($0.offset) }
+                .map(\.element)
+        }
+        return Self.sorted(result)
+    }
+
+    /// Returns `nil` when the repository no longer exists on disk, so a deleted checkout
+    /// is dropped from the list instead of lingering as a scan failure that counts
+    /// towards the attention badge until the next discovery.
+    private func refresh(_ repository: Repository) -> Repository? {
+        let checkout = repository.worktrees.first(where: \.isPrimary)?.path
+            ?? repository.worktrees.first?.path
+            ?? repository.commonDirectory
+        guard FileManager.default.fileExists(atPath: repository.commonDirectory) else { return nil }
+        return makeRepository(
+            commonDirectory: repository.commonDirectory,
+            checkout: checkout,
+            existingIconPath: repository.iconPath,
+            discoversIcon: false
+        ) ?? Self.unreadableRepository(
+            checkout: checkout,
+            commonDirectory: repository.commonDirectory,
+            reason: "git could not read this repository."
+        )
+    }
+
+    static func sorted(_ repositories: [Repository]) -> [Repository] {
+        repositories.sorted {
             if ($0.scanFailure != nil) != ($1.scanFailure != nil) {
                 return $0.scanFailure != nil
             }
@@ -135,7 +218,12 @@ public struct RepositoryScanner: Sendable {
         return .found(URL(fileURLWithPath: output).standardizedFileURL.path)
     }
 
-    private func makeRepository(commonDirectory: String, checkout: String) -> Repository? {
+    private func makeRepository(
+        commonDirectory: String,
+        checkout: String,
+        existingIconPath: String? = nil,
+        discoversIcon: Bool = true
+    ) -> Repository? {
         let worktreeResult = git(checkout, ["worktree", "list", "--porcelain", "-z"])
         guard worktreeResult.succeeded else {
             return Self.unreadableRepository(
@@ -189,7 +277,9 @@ public struct RepositoryScanner: Sendable {
         let stashCount = stashResult.succeeded
             ? stashResult.standardOutput.split(whereSeparator: \.isNewline).count
             : 0
-        let iconPath = worktrees.lazy.compactMap { Self.projectIconPath(in: $0.path) }.first
+        let iconPath = discoversIcon
+            ? worktrees.lazy.compactMap { Self.projectIconPath(in: $0.path) }.first
+            : existingIconPath
 
         return Repository(
             id: commonDirectory,

@@ -61,7 +61,20 @@ final class ModelsTests: XCTestCase {
         XCTAssertTrue(partlyUnreadable.needsAttention)
     }
 
+    func testRepositoryIsAffectedByWorktreeAndGitDirectoryPaths() {
+        let repository = makeRepository(worktrees: [
+            makeWorktree(path: "/tmp/example")
+        ])
+
+        XCTAssertTrue(repository.isAffected(byChangedPath: "/tmp/example"))
+        XCTAssertTrue(repository.isAffected(byChangedPath: "/tmp/example/src/file.swift"))
+        XCTAssertTrue(repository.isAffected(byChangedPath: "/tmp/example/.git/HEAD"))
+        XCTAssertFalse(repository.isAffected(byChangedPath: "/tmp/example-other/file.swift"))
+        XCTAssertFalse(repository.isAffected(byChangedPath: "/tmp/elsewhere"))
+    }
+
     private func makeWorktree(
+        path: String = "/tmp/example",
         isLocked: Bool = false,
         staged: Int = 0,
         unstaged: Int = 0,
@@ -73,8 +86,8 @@ final class ModelsTests: XCTestCase {
         operation: GitOperation? = nil
     ) -> Worktree {
         Worktree(
-            id: "/tmp/example",
-            path: "/tmp/example",
+            id: path,
+            path: path,
             branch: "main",
             head: "abcdef12",
             isDetached: false,

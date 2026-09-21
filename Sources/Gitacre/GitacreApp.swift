@@ -133,7 +133,7 @@ final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             NSApp.activate(ignoringOtherApps: true)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
-            if model.refreshAutomatically { Task { await model.refreshAll() } }
+            if model.refreshAutomatically { Task { await model.refreshAll(scope: .status()) } }
         }
     }
 
