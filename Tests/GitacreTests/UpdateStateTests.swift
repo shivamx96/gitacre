@@ -9,6 +9,17 @@ final class UpdateStateTests: XCTestCase {
         publishedAt: nil
     )
 
+    func testEveryNonIdleStateHasSettingsFeedbackAndOnlyOffersHaveInstallActions() {
+        let states: [UpdateState] = [.checking, .available(release), .downloading(received: 0, expected: 0),
+            .extracting(fraction: 0), .readyToInstall(release), .installing, .upToDate, .failed("Offline")]
+        XCTAssertNil(UpdateState.idle.statusMessage)
+        for state in states { XCTAssertFalse(state.statusMessage?.isEmpty ?? true) }
+        XCTAssertEqual(UpdateState.available(release).installActionTitle, "Update")
+        XCTAssertEqual(UpdateState.readyToInstall(release).installActionTitle, "Relaunch")
+        XCTAssertNil(UpdateState.checking.installActionTitle)
+        XCTAssertEqual(UpdateState.failed("Offline").statusMessage, "Update failed: Offline")
+    }
+
     func testProgressIsIndeterminateUntilTheDownloadSizeIsKnown() {
         // Sparkle reports received bytes before it reports the expected length, so the bar
         // has to distinguish "no progress yet" from "0% of a known total".

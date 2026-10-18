@@ -18,6 +18,28 @@ enum UpdateState: Equatable {
     case upToDate
     case failed(String)
 
+    var statusMessage: String? {
+        switch self {
+        case .idle: nil
+        case .checking: "Checking for updates…"
+        case let .available(release): "\(release.title) is available"
+        case .downloading: "Downloading update…"
+        case .extracting: "Preparing update…"
+        case let .readyToInstall(release): "\(release.title) is ready to install"
+        case .installing: "Installing update…"
+        case .upToDate: "You’re up to date"
+        case let .failed(message): "Update failed: \(message)"
+        }
+    }
+
+    var installActionTitle: String? {
+        switch self {
+        case .available: "Update"
+        case .readyToInstall: "Relaunch"
+        default: nil
+        }
+    }
+
     var release: UpdateRelease? {
         switch self {
         case let .available(release), let .readyToInstall(release): release
