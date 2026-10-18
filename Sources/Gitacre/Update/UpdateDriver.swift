@@ -108,13 +108,13 @@ final class UpdateDriver: NSObject, SPUUserDriver {
     func showUpdateReleaseNotesFailedToDownloadWithError(_ error: any Error) {}
 
     func showUpdateNotFoundWithError(_ error: any Error, acknowledgement: @escaping () -> Void) {
-        acknowledgement()
         report(.upToDate)
+        acknowledgement()
     }
 
     func showUpdaterError(_ error: any Error, acknowledgement: @escaping () -> Void) {
-        acknowledgement()
         report(.failed(Self.message(for: error)))
+        acknowledgement()
     }
 
     func showDownloadInitiated(cancellation: @escaping () -> Void) {
@@ -169,10 +169,12 @@ final class UpdateDriver: NSObject, SPUUserDriver {
         cancelInFlightWork = nil
         updateChoice = nil
         installChoice = nil
-        // A finished or abandoned installation returns to idle; a failure has already
-        // reported itself through showUpdaterError.
-        if case .failed = currentState { return }
-        report(.idle)
+        // Sparkle may dismiss synchronously or later after acknowledgement. Keep
+        // the check result visible until the user dismisses it or starts a new check.
+        switch currentState {
+        case .failed, .upToDate: return
+        default: report(.idle)
+        }
     }
 
     // MARK: - Helpers

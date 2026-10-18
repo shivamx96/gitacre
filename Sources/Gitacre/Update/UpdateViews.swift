@@ -113,10 +113,17 @@ struct UpdateSettings: View {
                     .labelsHidden().toggleStyle(.switch).controlSize(.small)
                     .disabled(!updates.isAvailable || !updates.automaticallyChecksForUpdates)
             }
+            if updates.isAvailable {
+                UpdateSettingsStatus(
+                    state: updates.state,
+                    install: updates.install,
+                    dismiss: updates.dismiss
+                )
+            }
             SettingsRow(title: "Check now", detail: updates.isAvailable ? nil : "Unavailable in this build") {
                 Button("Check", action: updates.checkForUpdates)
                     .controlSize(.small)
-                    .disabled(!updates.isAvailable || updates.state.isBusy)
+                    .disabled(!updates.isAvailable || updates.state.isBusy || updates.state.release != nil)
             }
         }
     }
@@ -126,5 +133,64 @@ struct UpdateSettings: View {
         if case .upToDate = updates.state { return "Up to date" }
         guard let date = updates.lastCheckDate else { return "Not checked yet" }
         return "Last checked \(compactRelativeDate(date)) ago"
+    }
+}
+
+/// Settings owns a complete update surface because opening it closes the popover.
+struct UpdateSettingsStatus: View {
+    let state: UpdateState
+    let install: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        if let message = state.statusMessage {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(message)
+                    .font(.system(size: 11))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("update-status")
+
+                switch state {
+                case .checking:
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Spacer()
+                        Button("Cancel", action: dismiss)
+                    }
+                case .available, .readyToInstall:
+                    HStack {
+                        if let notes = state.release?.releaseNotesURL {
+                            Link("Release notes", destination: notes)
+                        }
+                        Spacer()
+                        Button("Later", action: dismiss)
+                        Button(state.installActionTitle ?? "Update", action: install)
+                            .buttonStyle(.borderedProminent)
+                    }
+                case .downloading, .extracting:
+                    HStack {
+                        if let fraction = state.fractionComplete {
+                            ProgressView(value: fraction)
+                        } else {
+                            ProgressView().controlSize(.small)
+                        }
+                        if case .downloading = state {
+                            Button("Cancel", action: dismiss)
+                        }
+                    }
+                case .installing:
+                    ProgressView().controlSize(.small)
+                case .failed:
+                    Button("Dismiss", action: dismiss)
+                case .idle, .upToDate:
+                    EmptyView()
+                }
+            }
+            .controlSize(.small)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+        }
     }
 }
