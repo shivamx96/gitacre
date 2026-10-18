@@ -1,6 +1,8 @@
+import { selectRelease } from './releases.mjs';
+
 // The newest published release, prereleases included. /releases/latest cannot be used:
 // it excludes prereleases, and every release so far has been one, so it answers 404.
-const releaseEndpoint = "https://api.github.com/repos/shivamx96/gitacre/releases?per_page=10";
+const releaseEndpoint = "https://api.github.com/repos/shivamx96/gitacre/releases?per_page=30";
 const releasesEnabled = true;
 
 const previews = {
@@ -73,9 +75,8 @@ previewTabs.forEach((tab, index) => {
 });
 
 function enableRelease(release) {
-  const diskImage = release.assets?.find((asset) => asset.name.toLowerCase().endsWith(".dmg"));
-  const downloadURL = diskImage?.browser_download_url || release.html_url;
-  const version = release.tag_name?.replace(/^v/, "") || release.name;
+  const downloadURL = release.url;
+  const version = release.version.replace(/^v/, '');
 
   document.querySelectorAll(".release-link, #download-button").forEach((link) => {
     link.href = downloadURL;
@@ -87,7 +88,7 @@ function enableRelease(release) {
   });
 
   const note = document.querySelector("#release-note");
-  if (note) note.textContent = `${version} · macOS 14+ · Apple silicon + Intel`;
+  if (note) note.textContent = `${version}${release.prerelease ? ' · Prerelease' : ''} · macOS 14+ · Apple silicon + Intel`;
 }
 
 document.querySelectorAll("[aria-disabled='true']").forEach((link) => {
@@ -95,10 +96,10 @@ document.querySelectorAll("[aria-disabled='true']").forEach((link) => {
 });
 
 if (releasesEnabled) {
-  fetch(releaseEndpoint, { headers: { Accept: "application/vnd.github+json" } })
+  fetch(releaseEndpoint, { headers: { Accept: "application/vnd.github+json" }, signal: AbortSignal.timeout(8000) })
     .then((response) => response.ok ? response.json() : Promise.reject())
     .then((releases) => {
-      const published = releases.find((release) => !release.draft);
+      const published = selectRelease(releases);
       if (!published) return Promise.reject();
       enableRelease(published);
     })

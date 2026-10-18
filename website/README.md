@@ -29,3 +29,5 @@ docker compose up --build
 Set `PORT` if port 8080 is already in use, for example `PORT=18080 docker compose up --build`.
 
 The download buttons use the newest published release, prereleases included, through the public GitHub Releases API. Keep their static fallback URLs in `index.html` current so downloads continue to work if that API request fails.
+
+Release selection skips drafts, local test DMGs, missing assets, and foreign download URLs. It sorts eligible releases by publication date and keeps the direct-download fallback on errors or after an eight-second timeout. Run `node --test website/release.test.mjs` from the repository root.
