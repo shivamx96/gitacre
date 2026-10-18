@@ -138,7 +138,7 @@ private struct GeneralSettings: View {
                 SettingsRow(title: "Opens showing", detail: "Pending, if any; otherwise All") {
                     Text("Automatic").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
-                SettingsRow(title: "Refresh automatically", detail: "Every 60 seconds and whenever the panel opens") {
+                SettingsRow(title: "Refresh automatically", detail: "On file changes and wake; 60-second status fallback") {
                     Toggle("", isOn: $model.refreshAutomatically).labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
                 SettingsRow(
@@ -162,7 +162,7 @@ private struct RepositorySettings: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            SettingsGroup(title: "MONITORED FOLDERS", subtitle: "Scanned every 60s · \(model.repositories.count) repositories found") {
+            SettingsGroup(title: "MONITORED FOLDERS", subtitle: "Discovery every 15 min · \(model.repositories.count) repositories found") {
                 if model.roots.isEmpty {
                     SettingsRow(title: "No folders monitored", detail: "Add the folder where you keep repositories") { EmptyView() }
                 } else {
@@ -253,6 +253,10 @@ private struct GitHubSettings: View {
                 SettingsRow(title: "Poll pull requests", detail: "Every 5 minutes; ⌘R refreshes now") {
                     Toggle("", isOn: $model.pollPullRequests).labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
+                SettingsRow(title: "PR status changes", detail: "Notify when checks fail, changes are requested, or a PR is ready") {
+                    Toggle("", isOn: Binding(get: { model.notifyPRTransitions }, set: model.requestTransitionNotifications))
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
                 SettingsRow(title: "New review requests", detail: "Show a macOS notification") {
                     Toggle("", isOn: Binding(
                         get: { model.notifyReviewRequests },
@@ -322,6 +326,7 @@ private struct TerminalRow: View {
 }
 
 private struct AdvancedSettings: View {
+    @EnvironmentObject private var updates: UpdateController
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
@@ -336,7 +341,7 @@ private struct AdvancedSettings: View {
                     Button("Clear") { model.clearRepositoryCache() }.buttonStyle(QuietButtonStyle())
                 }
                 SettingsRow(title: "Diagnostics", detail: "Copies configuration without credentials") {
-                    Button("Copy report") { model.copyDiagnostics() }.buttonStyle(QuietButtonStyle())
+                    Button("Copy report") { model.copyDiagnostics(updateSummary: updates.diagnosticSummary) }.buttonStyle(QuietButtonStyle())
                 }
                 SettingsRow(title: "Refresh all data") {
                     Button("Refresh") { Task { await model.refreshAll() } }.buttonStyle(QuietButtonStyle())

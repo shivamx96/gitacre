@@ -11,7 +11,7 @@ struct RepositoryListView: View {
     var emptyAction: (() -> Void)?
 
     private var sections: [RepositorySection] {
-        repositorySections(repositories: model.repositories, showsPendingOnly: showsPendingOnly)
+        repositorySections(repositories: model.repositories, showsPendingOnly: showsPendingOnly, remoteAttentionIDs: model.remoteAttentionRepositoryIDs)
     }
 
     var body: some View {
@@ -93,7 +93,7 @@ struct RepositorySection: Identifiable {
     var id: String { title }
 }
 
-func repositorySections(repositories: [Repository], showsPendingOnly: Bool) -> [RepositorySection] {
+func repositorySections(repositories: [Repository], showsPendingOnly: Bool, remoteAttentionIDs: Set<String> = []) -> [RepositorySection] {
     // A repository can still have readable worktrees when one linked worktree fails.
     // Classify every scan failure explicitly so it cannot disappear from the Pending tab.
     let scanIssues = repositories.filter { $0.scanFailure != nil }
@@ -102,6 +102,7 @@ func repositorySections(repositories: [Repository], showsPendingOnly: Bool) -> [
     if showsPendingOnly {
         return [
             RepositorySection(title: "SCAN ISSUES", repositories: scanIssues),
+            RepositorySection(title: "PULL REQUESTS", repositories: healthy.filter { !$0.hasPendingWork && remoteAttentionIDs.contains($0.id) }),
             RepositorySection(title: "UNCOMMITTED", repositories: healthy.filter { $0.hasUncommittedWork }),
             RepositorySection(title: "AHEAD OF REMOTE", repositories: healthy.filter { !$0.hasUncommittedWork && $0.totalAhead > 0 }),
             RepositorySection(title: "BEHIND REMOTE", repositories: healthy.filter { !$0.hasUncommittedWork && $0.totalAhead == 0 && $0.totalBehind > 0 }),
@@ -111,13 +112,13 @@ func repositorySections(repositories: [Repository], showsPendingOnly: Bool) -> [
 
     return [
         RepositorySection(title: "SCAN ISSUES", repositories: scanIssues),
-        RepositorySection(title: "ACTIVE", repositories: healthy.filter(\.hasPendingWork)),
-        RepositorySection(title: "CLEAN", repositories: healthy.filter { !$0.hasPendingWork })
+        RepositorySection(title: "ACTIVE", repositories: healthy.filter { $0.hasPendingWork || remoteAttentionIDs.contains($0.id) }),
+        RepositorySection(title: "CLEAN", repositories: healthy.filter { !$0.hasPendingWork && !remoteAttentionIDs.contains($0.id) })
     ].filter { !$0.repositories.isEmpty }
 }
 
-func pendingRepositoryDisplayOrder(_ repositories: [Repository]) -> [Repository] {
-    repositorySections(repositories: repositories, showsPendingOnly: true).flatMap(\.repositories)
+func pendingRepositoryDisplayOrder(_ repositories: [Repository], remoteAttentionIDs: Set<String> = []) -> [Repository] {
+    repositorySections(repositories: repositories, showsPendingOnly: true, remoteAttentionIDs: remoteAttentionIDs).flatMap(\.repositories)
 }
 
 private struct RepositorySectionView: View {
@@ -207,6 +208,7 @@ private struct RepositoryRow: View {
                     }
 
                     RepositoryStatusLine(repository: repository)
+                    WorktreePullRequests(repository: repository, worktree: nil)
                 }
 
                 RepositoryActions(repository: repository, worktree: worktree, emphasized: hovered || selected)
@@ -341,6 +343,7 @@ private struct WorktreeRow: View {
                 }
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
+                WorktreePullRequests(repository: repository, worktree: worktree)
             }
 
             HStack(spacing: 1) {
@@ -714,5 +717,22 @@ private struct FirstScanView: View {
             Spacer()
         }
         .padding(.top, 8)
+    }
+}
+
+private struct WorktreePullRequests: View {
+    @EnvironmentObject private var model: AppModel
+    let repository: Repository
+    let worktree: Worktree?
+    var body: some View {
+        ForEach(model.pullRequests(repository: repository, worktree: worktree)) { request in
+            Button { model.open(request.url) } label: {
+                Text("#\(request.number) · \(request.attentionSummary)")
+                    .font(.system(size: 10)).lineLimit(2)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Open pull request: " + request.title)
+        }
     }
 }

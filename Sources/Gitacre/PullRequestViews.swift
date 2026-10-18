@@ -60,7 +60,7 @@ struct PullRequestListView: View {
                     LazyVStack(spacing: 0) {
                         if let error = model.githubSnapshot.errorMessage {
                             InlineErrorBanner(
-                                title: "Showing cached pull requests",
+                                title: "Pull request refresh incomplete",
                                 message: error,
                                 primaryTitle: "Retry",
                                 primaryAction: { Task { await model.refreshGitHub() } }
@@ -178,8 +178,8 @@ private struct PullRequestRow: View {
     @State private var hovered = false
 
     private var repository: Repository? {
-        let shortName = pullRequest.repository.split(separator: "/").last.map(String.init) ?? pullRequest.repository
-        return model.repositories.first { $0.name.caseInsensitiveCompare(shortName) == .orderedSame }
+        let matches = model.repositories.filter { RepositoryIdentity(url: $0.remoteURL) == pullRequest.repositoryIdentity }
+        return matches.count == 1 ? matches.first : nil
     }
 
     var body: some View {
@@ -208,6 +208,13 @@ private struct PullRequestRow: View {
                         Spacer(minLength: 0)
                     }
 
+                    Text(pullRequest.attentionSummary)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    if pullRequest.matchingWorktrees(in: model.repositories).count > 1 {
+                        Text("Multiple local matches").font(.system(size: 9)).foregroundStyle(.secondary)
+                    }
                     HStack(spacing: 4) {
                         Text(shortRepositoryName).fontWeight(.medium)
                         Text("#\(pullRequest.number)")
@@ -243,6 +250,7 @@ private struct PullRequestRow: View {
             .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
+        .task(id: pullRequest.id) { await model.enrichVisiblePullRequest(pullRequest) }
         .onHover { value in withAnimation(.easeOut(duration: 0.09)) { hovered = value } }
         .accessibilityLabel(accessibilityDescription)
         .accessibilityHint("Open on GitHub")

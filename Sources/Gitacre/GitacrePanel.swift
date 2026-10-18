@@ -260,7 +260,7 @@ struct GitacrePanel: View {
 
     private var orderedRepositories: [Repository] {
         if selectedTab == .all { return model.repositories }
-        return pendingRepositoryDisplayOrder(model.repositories)
+        return pendingRepositoryDisplayOrder(model.repositories, remoteAttentionIDs: model.remoteAttentionRepositoryIDs)
     }
 
     private func ensureSelection() {
