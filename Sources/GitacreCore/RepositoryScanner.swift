@@ -59,6 +59,8 @@ public struct RepositoryScanner: Sendable {
     /// Runs a refresh request: full discovery of monitored roots, or status-only
     /// refresh of already-known repositories.
     public static func run(_ request: RepositoryRefreshRequest) -> [Repository] {
+        let started = Date()
+        defer { ProcessDiagnostics.shared.recordScan(duration: Date().timeIntervalSince(started), discovery: request.scope.isDiscovery) }
         let scanner = RepositoryScanner(
             maximumDepth: request.configuration.maximumDepth,
             includeLinkedWorktrees: request.configuration.includeLinkedWorktrees,
@@ -224,6 +226,8 @@ public struct RepositoryScanner: Sendable {
         existingIconPath: String? = nil,
         discoversIcon: Bool = true
     ) -> Repository? {
+        let started = Date()
+        defer { ProcessDiagnostics.shared.recordRepository(duration: Date().timeIntervalSince(started)) }
         let worktreeResult = git(checkout, ["worktree", "list", "--porcelain", "-z"])
         guard worktreeResult.succeeded else {
             return Self.unreadableRepository(

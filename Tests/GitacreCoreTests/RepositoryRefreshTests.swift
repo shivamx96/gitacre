@@ -19,6 +19,26 @@ final class RepositoryRefreshTests: XCTestCase {
         XCTAssertEqual(RepositoryScanner.parseStatus("# branch.head main").stashCount, 0)
     }
 
+    func testWorkerDoesNotRestoreAnOlderUnrelatedRepository() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let alpha = root.appendingPathComponent("alpha")
+        let beta = root.appendingPathComponent("beta")
+        for directory in [alpha, beta] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            XCTAssertTrue(ProcessRunner().run(executable: "/usr/bin/git", arguments: ["-C", directory.path, "init", "-q"]).succeeded)
+        }
+        let config = configuration(roots: [root.path])
+        let worker = RepositoryRefreshWorker()
+        let original = await worker.run(RepositoryRefreshRequest(configuration: config, scope: .discovery))
+        try Data("a".utf8).write(to: alpha.appendingPathComponent("pending"))
+        _ = await worker.run(RepositoryRefreshRequest(configuration: config, scope: .status(paths: [alpha.path]), knownRepositories: original.repositories))
+        try Data("b".utf8).write(to: beta.appendingPathComponent("pending"))
+        let result = await worker.run(RepositoryRefreshRequest(configuration: config, scope: .status(paths: [beta.path]), knownRepositories: original.repositories))
+        XCTAssertEqual(result.repositories.count, 2)
+        XCTAssertTrue(result.repositories.allSatisfy { $0.totalChangedFiles == 1 })
+    }
+
     func testDiscoveryWinsOverStatusAndKeepsTheLatestConfiguration() {
         let first = RepositoryRefreshRequest(
             configuration: configuration(roots: ["/old"], depth: 2),
