@@ -210,6 +210,8 @@ public struct PullRequest: Identifiable, Equatable, Codable, Sendable {
     public let updatedAt: Date
     public let comments: Int
     public let kind: Kind
+    public var details: PullRequestDetails?
+    public var detailsFetchedAt: Date?
 
     public init(
         id: String,
