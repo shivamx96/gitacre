@@ -33,6 +33,13 @@ final class RepositoryIconCache {
     /// Drops everything so a discovery scan picks up icons that were added, replaced, or removed.
     ///
     /// Bounds staleness to one discovery interval without paying a `stat` on every render.
+    func invalidate(paths: Set<String>) {
+        for path in Set(images.keys).union(unreadablePaths) where paths.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
+            images.removeValue(forKey: path)
+            unreadablePaths.remove(path)
+        }
+    }
+
     func invalidate() {
         images.removeAll(keepingCapacity: true)
         unreadablePaths.removeAll(keepingCapacity: true)

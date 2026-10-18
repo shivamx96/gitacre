@@ -51,56 +51,89 @@ public struct GitHubCLIService: Sendable {
 
     public func loadPullRequests(
         preferredPath: String? = nil,
-        cacheURL: URL? = nil
+        cacheURL: URL? = nil,
+        organizations: [String] = [],
+        localRepositories: [Repository] = []
     ) -> GitHubSnapshot {
         let authentication = authentication(preferredPath: preferredPath)
         guard case let .signedIn(executable, login) = authentication else {
+            // Do not show another account's cached private data when identity is unknown.
             return GitHubSnapshot(authentication: authentication)
         }
-
+        let scope = organizations.map { $0.lowercased() }.sorted()
+        let cache = readCache(at: cacheURL).flatMap { $0.login == login && $0.organizations == scope ? $0 : nil }
         let fields = "number,title,url,repository,author,isDraft,updatedAt,commentsCount"
-        let authored = runner.run(
-            executable: executable,
-            arguments: [
-                "search", "prs", "--author=@me", "--state=open", "--limit", "50",
-                "--json", fields
-            ]
-        )
-        let reviews = runner.run(
-            executable: executable,
-            arguments: [
-                "search", "prs", "--review-requested=@me", "--state=open", "--limit", "50",
-                "--json", fields
-            ]
-        )
-
-        guard authored.succeeded, reviews.succeeded,
-              let authoredRows = decodePullRequests(authored.standardOutput, kind: .authored),
-              let reviewRows = decodePullRequests(reviews.standardOutput, kind: .reviewRequested) else {
-            let message = firstUsefulError(authored.standardError, reviews.standardError)
-                ?? "GitHub could not be reached"
-            if let cache = readCache(at: cacheURL) {
-                return GitHubSnapshot(
-                    authentication: authentication,
-                    pullRequests: cache.pullRequests,
-                    fetchedAt: cache.fetchedAt,
-                    errorMessage: message
-                )
+        var rows: [PullRequest] = []
+        var warnings: [String] = []
+        var failedKinds = Set<PullRequest.Kind>()
+        for kind in [PullRequest.Kind.reviewRequested, .authored] {
+            var arguments = ["search", "prs", kind == .authored ? "--author=@me" : "--review-requested=@me",
+                             "--state=open", "--limit", "1000", "--json", fields]
+            for owner in scope { arguments += ["--owner", owner] }
+            let result = runner.run(executable: executable, arguments: arguments)
+            if result.succeeded, let decoded = decodePullRequests(result.standardOutput, kind: kind) {
+                rows += decoded
+                if decoded.count >= 1000 { warnings.append("Search reached GitHub's 1,000-result limit; narrow the organization filter.") }
+            } else {
+                failedKinds.insert(kind)
+                warnings.append("Some pull requests could not be refreshed; cached results are shown where available.")
+                rows += cache?.pullRequests.filter { $0.kind == kind } ?? []
             }
-            return GitHubSnapshot(authentication: authentication, errorMessage: message)
         }
-
-        let pullRequests = (reviewRows.filter { $0.author.caseInsensitiveCompare(login) != .orderedSame }
-            + authoredRows)
+        var seen = Set<String>()
+        rows = rows.filter { !($0.kind == .reviewRequested && $0.author.caseInsensitiveCompare(login) == .orderedSame) }
+            .filter { seen.insert($0.url.absoluteString).inserted }
             .sorted { $0.updatedAt > $1.updatedAt }
-        let fetchedAt = Date()
-        writeCache(CachePayload(fetchedAt: fetchedAt, pullRequests: pullRequests), to: cacheURL)
+        let cachedRows = Dictionary((cache?.pullRequests ?? []).map { ($0.url, $0) }, uniquingKeysWith: { first, _ in first })
+        for index in rows.indices {
+            if let old = cachedRows[rows[index].url] {
+                rows[index].details = old.details
+                rows[index].detailsFetchedAt = old.detailsFetchedAt
+            }
+        }
+        let identities = Set(localRepositories.compactMap { RepositoryIdentity(url: $0.remoteURL) })
+        // Bound work to 24 details per poll. Visible rows can request details on demand.
+        let candidates = rows.indices.filter { !failedKinds.contains(rows[$0].kind) && (rows[$0].details == nil || rows[$0].detailsAreStale) }
+            .sorted {
+                let left = rows[$0].repositoryIdentity.map(identities.contains) ?? false
+                let right = rows[$1].repositoryIdentity.map(identities.contains) ?? false
+                if left != right { return left }
+                return (rows[$0].detailsFetchedAt ?? .distantPast) < (rows[$1].detailsFetchedAt ?? .distantPast)
+            }.prefix(24)
+        let detailIndices = Array(candidates)
+        let enrichmentStarted = Date()
+        for start in stride(from: 0, to: detailIndices.count, by: 4) {
+            if Date().timeIntervalSince(enrichmentStarted) > 20 { break }
+            let batch = detailIndices[start..<min(start + 4, detailIndices.count)].map { ($0, rows[$0]) }
+            let results = RepositoryScanner.concurrentMap(batch) { item in
+                (item.0, loadDetails(for: item.1, executable: executable))
+            }
+            for (index, details) in results {
+                if let details {
+                    rows[index].details = details
+                    rows[index].detailsFetchedAt = Date()
+                } else {
+                    warnings.append("Some PR checks and reviews could not be refreshed.")
+                }
+            }
+        }
+        let currentAccount = self.authentication(preferredPath: preferredPath)
+        guard currentAccount == authentication else {
+            return GitHubSnapshot(authentication: currentAccount, errorMessage: "GitHub account changed during refresh. Refresh again to load its pull requests.")
+        }
+        let fetchedAt = failedKinds.isEmpty ? Date() : cache?.fetchedAt
+        // Failed refreshes never advance the freshness of cached lists.
+        writeCache(CachePayload(login: login, organizations: scope, fetchedAt: fetchedAt, pullRequests: rows), to: cacheURL)
+        return GitHubSnapshot(authentication: authentication, pullRequests: rows, fetchedAt: fetchedAt,
+            errorMessage: warnings.isEmpty ? nil : Array(Set(warnings)).sorted().joined(separator: " "))
+    }
 
-        return GitHubSnapshot(
-            authentication: authentication,
-            pullRequests: pullRequests,
-            fetchedAt: fetchedAt
-        )
+    public func loadDetails(for pullRequest: PullRequest, executable: String) -> PullRequestDetails? {
+        guard pullRequest.url.scheme == "https", pullRequest.url.host == "github.com" else { return nil }
+        let result = runner.run(executable: executable, arguments: ["pr", "view", pullRequest.url.absoluteString,
+            "--json", "headRefName,headRefOid,headRepository,baseRefName,reviewDecision,mergeStateStatus,mergeable,statusCheckRollup"])
+        guard result.succeeded, let data = result.standardOutput.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(PullRequestDetails.self, from: data)
     }
 
     private func decodePullRequests(_ output: String, kind: PullRequest.Kind) -> [PullRequest]? {
@@ -196,6 +229,8 @@ private struct RawPullRequest: Decodable {
 }
 
 private struct CachePayload: Codable {
-    let fetchedAt: Date
+    let login: String
+    let organizations: [String]
+    let fetchedAt: Date?
     let pullRequests: [PullRequest]
 }

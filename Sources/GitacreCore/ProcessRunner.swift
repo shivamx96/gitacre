@@ -38,6 +38,10 @@ public struct ProcessRunner: ProcessRunning {
     }
 
     public func run(executable: String, arguments: [String]) -> ProcessResult {
+        let started = Date()
+        var failed = true
+        var didTimeOut = false
+        defer { ProcessDiagnostics.shared.record(duration: Date().timeIntervalSince(started), failed: failed, timedOut: didTimeOut) }
         let process = Process()
         let standardOutput = Pipe()
         let standardError = Pipe()
@@ -73,6 +77,8 @@ public struct ProcessRunner: ProcessRunning {
         draining.wait()
         process.waitUntilExit()
 
+        didTimeOut = timedOut
+        failed = timedOut || process.terminationStatus != 0
         if timedOut {
             return ProcessResult(
                 standardOutput: String(decoding: output.value, as: UTF8.self),

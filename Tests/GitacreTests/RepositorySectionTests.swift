@@ -54,6 +54,18 @@ final class RepositorySectionTests: XCTestCase {
         XCTAssertEqual(pendingRepositoryDisplayOrder(repositories).map(\.id), visibleIDs)
     }
 
+    func testRemoteOnlyAttentionIsVisibleSelectableAndNotDuplicated() {
+        let clean = makeRepository(id: "remote")
+        let dirty = makeRepository(id: "dirty", worktree: makeWorktree(changedFiles: 1))
+        let remote: Set<String> = ["remote", "dirty"]
+        let sections = repositorySections(repositories: [clean, dirty], showsPendingOnly: true, remoteAttentionIDs: remote)
+        XCTAssertEqual(sections.map(\.title), ["PULL REQUESTS", "UNCOMMITTED"])
+        XCTAssertEqual(sections.flatMap(\.repositories).map(\.id), ["remote", "dirty"])
+        XCTAssertEqual(pendingRepositoryDisplayOrder([clean, dirty], remoteAttentionIDs: remote).map(\.id), ["remote", "dirty"])
+        let all = repositorySections(repositories: [clean], showsPendingOnly: false, remoteAttentionIDs: remote)
+        XCTAssertEqual(all.map(\.title), ["ACTIVE"])
+    }
+
     private var cleanWorktree: Worktree {
         makeWorktree()
     }

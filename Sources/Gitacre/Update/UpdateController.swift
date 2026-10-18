@@ -75,6 +75,23 @@ final class UpdateController: ObservableObject {
         updater?.lastUpdateCheckDate
     }
 
+    var diagnosticSummary: String {
+        let label: String
+        switch state {
+        case .idle: label = "idle"
+        case .checking: label = "checking"
+        case .available: label = "available"
+        case .downloading: label = "downloading"
+        case .extracting: label = "extracting"
+        case .readyToInstall: label = "ready to install"
+        case .installing: label = "installing"
+        case .upToDate: label = "up to date"
+        case .failed: label = "failed"
+        }
+        let age = lastCheckDate.map { String(Int(Date().timeIntervalSince($0))) + "s" } ?? "never"
+        return "Updater: \(isAvailable ? label : "unavailable"); last check age: \(age)"
+    }
+
     /// A check the user asked for: reports being up to date rather than staying silent.
     func checkForUpdates() {
         guard let updater, !state.isBusy else { return }

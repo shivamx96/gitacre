@@ -3,6 +3,42 @@ import XCTest
 @testable import GitacreCore
 
 final class RepositoryRefreshTests: XCTestCase {
+    func testSnapshotRejectsDifferentConfigurationAndCorruptData() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let config = configuration()
+        LocalSnapshot(configuration: config, repositories: [], fetchedAt: Date()).write(to: url)
+        XCTAssertNotNil(LocalSnapshot.read(at: url, configuration: config))
+        XCTAssertNil(LocalSnapshot.read(at: url, configuration: configuration(roots: ["/other"])))
+        try Data("invalid".utf8).write(to: url)
+        XCTAssertNil(LocalSnapshot.read(at: url, configuration: config))
+    }
+
+    func testPorcelainStashCount() {
+        XCTAssertEqual(RepositoryScanner.parseStatus("# stash 3\n# branch.head main").stashCount, 3)
+        XCTAssertEqual(RepositoryScanner.parseStatus("# branch.head main").stashCount, 0)
+    }
+
+    func testWorkerDoesNotRestoreAnOlderUnrelatedRepository() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let alpha = root.appendingPathComponent("alpha")
+        let beta = root.appendingPathComponent("beta")
+        for directory in [alpha, beta] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            XCTAssertTrue(ProcessRunner().run(executable: "/usr/bin/git", arguments: ["-C", directory.path, "init", "-q"]).succeeded)
+        }
+        let config = configuration(roots: [root.path])
+        let worker = RepositoryRefreshWorker()
+        let original = await worker.run(RepositoryRefreshRequest(configuration: config, scope: .discovery))
+        try Data("a".utf8).write(to: alpha.appendingPathComponent("pending"))
+        _ = await worker.run(RepositoryRefreshRequest(configuration: config, scope: .status(paths: [alpha.path]), knownRepositories: original.repositories))
+        try Data("b".utf8).write(to: beta.appendingPathComponent("pending"))
+        let result = await worker.run(RepositoryRefreshRequest(configuration: config, scope: .status(paths: [beta.path]), knownRepositories: original.repositories))
+        XCTAssertEqual(result.repositories.count, 2)
+        XCTAssertTrue(result.repositories.allSatisfy { $0.totalChangedFiles == 1 })
+    }
+
     func testDiscoveryWinsOverStatusAndKeepsTheLatestConfiguration() {
         let first = RepositoryRefreshRequest(
             configuration: configuration(roots: ["/old"], depth: 2),
@@ -56,7 +92,7 @@ final class RepositoryRefreshTests: XCTestCase {
         XCTAssertEqual(everything.scope.merging(right.scope), .status(paths: nil))
     }
 
-    func testDiscoveryCoversStatusOnlyWhenTheConfigurationMatches() {
+    func testDiscoveryNeverAbsorbsLaterChanges() {
         let discovery = RepositoryRefreshRequest(
             configuration: configuration(roots: ["/tmp"], depth: 3),
             scope: .discovery
@@ -70,12 +106,12 @@ final class RepositoryRefreshTests: XCTestCase {
             scope: .status()
         )
 
-        XCTAssertTrue(discovery.covers(status))
+        XCTAssertFalse(discovery.covers(status))
         XCTAssertFalse(status.covers(discovery))
         XCTAssertFalse(discovery.covers(otherRoots))
-        XCTAssertTrue(
+        XCTAssertFalse(
             discovery.covers(discovery),
-            "a running discovery must absorb an identical one instead of restarting it"
+            "a later request can contain changes made during discovery"
         )
     }
 

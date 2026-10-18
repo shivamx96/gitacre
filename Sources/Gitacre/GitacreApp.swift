@@ -86,6 +86,10 @@ final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
     }
 
     private func observeModel() {
+        updates.$state
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateStatusItem() }
+            .store(in: &cancellables)
         Publishers.CombineLatest4(model.$repositories, model.$githubSnapshot, model.$menuBarDisplayMode, model.$dimIconWhenIdle)
             .receive(on: RunLoop.main)
             .sink { [weak self] _, _, _, _ in self?.updateStatusItem() }
@@ -176,11 +180,14 @@ final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         button.title = model.menuBarDisplayMode == .glyphAndCount && model.attentionCount > 0
             ? " \(model.attentionCount)"
             : ""
-        button.alphaValue = model.dimIconWhenIdle && model.attentionCount == 0 ? 0.58 : 1
+        let updateAvailable = updates.state.release != nil
+        if updateAvailable { button.title += " ↑" }
+        button.alphaValue = model.dimIconWhenIdle && model.attentionCount == 0 && !updateAvailable ? 0.58 : 1
         button.toolTip = model.isGlobalShortcutRegistered
             ? "gitacre — \(GlobalShortcutDefinition.showGitacre.label)"
             : "gitacre"
-        button.setAccessibilityLabel(menuBarAccessibilityLabel)
+        if updateAvailable { button.toolTip = (button.toolTip ?? "gitacre") + " — Update available" }
+        button.setAccessibilityLabel(menuBarAccessibilityLabel + (updateAvailable ? ", update available" : ""))
     }
 
     private var menuBarAccessibilityLabel: String {
