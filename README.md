@@ -42,6 +42,7 @@ The Pull Requests view is optional. To use it, install the [GitHub CLI](https://
 
 - macOS 14 Sonoma or later
 - Apple silicon or Intel Mac
+- Apple’s system Git (`/usr/bin/git`), provided by Xcode or its Command Line Tools
 - GitHub CLI only for the optional Pull Requests view
 
 ## Private by construction
@@ -52,7 +53,7 @@ Repository scans never fetch or write. Ahead and behind counts reflect the remot
 
 ## Build from source
 
-Building gitacre requires Xcode 16 or newer.
+Building gitacre requires an Xcode toolchain with Swift 6.1 or newer, matching [`Package.swift`](Package.swift). Check the selected toolchain with `swift --version`.
 
 ```sh
 git clone https://github.com/shivamx96/gitacre.git
@@ -60,6 +61,8 @@ cd gitacre
 scripts/build-app.sh
 open build/gitacre.app
 ```
+
+The build script creates a universal app for Apple silicon and Intel, signed locally for development. For a faster build targeting only your Mac, use `scripts/build-app.sh debug`.
 
 For a development run without creating an app bundle:
 
