@@ -1,6 +1,6 @@
 import Foundation
 
-public struct Repository: Identifiable, Equatable, Sendable {
+public struct Repository: Identifiable, Equatable, Codable, Sendable {
     public let id: String
     public let name: String
     public let commonDirectory: String
@@ -83,7 +83,7 @@ public struct Repository: Identifiable, Equatable, Sendable {
     }
 }
 
-public struct Worktree: Identifiable, Equatable, Sendable {
+public struct Worktree: Identifiable, Equatable, Codable, Sendable {
     public let id: String
     public let path: String
     public let branch: String
@@ -149,7 +149,7 @@ public struct Worktree: Identifiable, Equatable, Sendable {
     }
 }
 
-public enum GitOperation: String, Equatable, Sendable {
+public enum GitOperation: String, Equatable, Codable, Sendable {
     case merge
     case rebase
     case cherryPick = "cherry-pick"

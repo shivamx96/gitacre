@@ -1,6 +1,6 @@
 import Foundation
 
-public struct ScanConfiguration: Equatable, Sendable {
+public struct ScanConfiguration: Equatable, Codable, Sendable {
     public var roots: [String]
     public var maximumDepth: Int
     public var includeLinkedWorktrees: Bool
@@ -80,24 +80,62 @@ public struct RepositoryRefreshRequest: Equatable, Sendable {
         )
     }
 
-    /// A discovery already in flight satisfies any request for the same configuration:
-    /// it rebuilds the whole list and reads current git status for every repository it
-    /// finds, which is a superset of what a status refresh — or a second identical
-    /// discovery — would produce.
-    ///
-    /// A status run never covers another request: it may be stale relative to a newer
-    /// status snapshot, and it cannot discover checkouts a later discovery needs.
-    public func covers(_ next: Self) -> Bool {
-        configuration == next.configuration && scope.isDiscovery
-    }
+    /// A later request may describe changes made after the active scan read a file.
+    /// Always queue a follow-up, even for identical discovery configurations.
+    public func covers(_ next: Self) -> Bool { false }
 }
 
 public struct RepositoryRefreshOutcome: Equatable, Sendable {
     public var repositories: [Repository]
     public var scope: RepositoryRefreshScope
-
     public init(repositories: [Repository], scope: RepositoryRefreshScope) {
         self.repositories = repositories
         self.scope = scope
+    }
+}
+
+public struct LocalSnapshot: Codable, Sendable {
+    public let configuration: ScanConfiguration
+    public let repositories: [Repository]
+    public let fetchedAt: Date
+
+    public init(configuration: ScanConfiguration, repositories: [Repository], fetchedAt: Date) {
+        self.configuration = configuration
+        self.repositories = repositories
+        self.fetchedAt = fetchedAt
+    }
+
+    public static func read(at url: URL, configuration: ScanConfiguration) -> Self? {
+        guard let data = try? Data(contentsOf: url),
+              let value = try? JSONDecoder().decode(Self.self, from: data),
+              value.configuration == configuration else { return nil }
+        return value
+    }
+
+    public func write(to url: URL) {
+        guard let data = try? JSONEncoder().encode(self) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+    }
+}
+
+/// Keeps the latest scan baseline inside the serialized worker, even before the UI
+/// resumes its continuation. Targeted refreshes cannot restore an older unrelated row.
+public actor RepositoryRefreshWorker {
+    private var configuration: ScanConfiguration?
+    private var repositories: [Repository] = []
+    public init() {}
+    public func run(_ request: RepositoryRefreshRequest) async -> RepositoryRefreshOutcome {
+        var effective = request
+        if configuration == request.configuration {
+            effective.knownRepositories = repositories
+        } else if !request.scope.isDiscovery {
+            effective.scope = .discovery
+        }
+        let input = effective
+        let result = await Task.detached(priority: .utility) { RepositoryScanner.run(input) }.value
+        configuration = request.configuration
+        repositories = result
+        return RepositoryRefreshOutcome(repositories: result, scope: effective.scope)
     }
 }

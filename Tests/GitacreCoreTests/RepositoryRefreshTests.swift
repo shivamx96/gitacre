@@ -3,6 +3,22 @@ import XCTest
 @testable import GitacreCore
 
 final class RepositoryRefreshTests: XCTestCase {
+    func testSnapshotRejectsDifferentConfigurationAndCorruptData() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let config = configuration()
+        LocalSnapshot(configuration: config, repositories: [], fetchedAt: Date()).write(to: url)
+        XCTAssertNotNil(LocalSnapshot.read(at: url, configuration: config))
+        XCTAssertNil(LocalSnapshot.read(at: url, configuration: configuration(roots: ["/other"])))
+        try Data("invalid".utf8).write(to: url)
+        XCTAssertNil(LocalSnapshot.read(at: url, configuration: config))
+    }
+
+    func testPorcelainStashCount() {
+        XCTAssertEqual(RepositoryScanner.parseStatus("# stash 3\n# branch.head main").stashCount, 3)
+        XCTAssertEqual(RepositoryScanner.parseStatus("# branch.head main").stashCount, 0)
+    }
+
     func testDiscoveryWinsOverStatusAndKeepsTheLatestConfiguration() {
         let first = RepositoryRefreshRequest(
             configuration: configuration(roots: ["/old"], depth: 2),
@@ -56,7 +72,7 @@ final class RepositoryRefreshTests: XCTestCase {
         XCTAssertEqual(everything.scope.merging(right.scope), .status(paths: nil))
     }
 
-    func testDiscoveryCoversStatusOnlyWhenTheConfigurationMatches() {
+    func testDiscoveryNeverAbsorbsLaterChanges() {
         let discovery = RepositoryRefreshRequest(
             configuration: configuration(roots: ["/tmp"], depth: 3),
             scope: .discovery
@@ -70,12 +86,12 @@ final class RepositoryRefreshTests: XCTestCase {
             scope: .status()
         )
 
-        XCTAssertTrue(discovery.covers(status))
+        XCTAssertFalse(discovery.covers(status))
         XCTAssertFalse(status.covers(discovery))
         XCTAssertFalse(discovery.covers(otherRoots))
-        XCTAssertTrue(
+        XCTAssertFalse(
             discovery.covers(discovery),
-            "a running discovery must absorb an identical one instead of restarting it"
+            "a later request can contain changes made during discovery"
         )
     }
 

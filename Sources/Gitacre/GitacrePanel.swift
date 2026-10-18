@@ -85,6 +85,7 @@ struct GitacrePanel: View {
                     .font(.system(size: 12.5, weight: .semibold))
                     .tracking(-0.15)
                 Text(headerSubtitle)
+                    .help(model.lastRepositoryRefresh.map { "Last local refresh: " + $0.formatted(date: .complete, time: .standard) } ?? "Not yet scanned")
                     .font(.system(size: 10.5))
                     .foregroundStyle(GitacreTheme.tertiaryInk(colorScheme))
                     .lineLimit(1)
@@ -196,6 +197,7 @@ struct GitacrePanel: View {
             return "Scanning \(model.roots.count) folder\(model.roots.count == 1 ? "" : "s")…"
         }
         if selectedTab == .pullRequests && model.isLoadingGitHub { return "Checking GitHub…" }
+        if selectedTab != .pullRequests, model.isRepositorySnapshotStale || (model.lastRepositoryRefresh.map { Date().timeIntervalSince($0) > 180 } ?? false) { return "Cached repository status · refresh needed" }
         switch selectedTab {
         case .pending:
             if model.roots.isEmpty { return "No folders monitored" }

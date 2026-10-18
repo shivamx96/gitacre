@@ -245,10 +245,12 @@ public struct RepositoryScanner: Sendable {
         }
         var worktrees: [Worktree] = []
         var failures: [String] = []
+        var stashCount = 0
         for (index, record) in records.enumerated() {
             switch makeWorktree(record: record, isPrimary: index == 0) {
-            case let .worktree(worktree):
+            case let .worktree(worktree, stashes):
                 worktrees.append(worktree)
+                stashCount = max(stashCount, stashes)
             case .pruned:
                 // git still lists it but the directory is gone; `git worktree prune` clears it.
                 continue
@@ -273,10 +275,6 @@ public struct RepositoryScanner: Sendable {
         let remoteURL = Self.webURL(forOrigin: origin)
         let name = Self.repositoryName(origin: origin, fallbackPath: worktrees[0].path)
 
-        let stashResult = git(checkout, ["stash", "list", "--format=%gd"])
-        let stashCount = stashResult.succeeded
-            ? stashResult.standardOutput.split(whereSeparator: \.isNewline).count
-            : 0
         let iconPath = discoversIcon
             ? worktrees.lazy.compactMap { Self.projectIconPath(in: $0.path) }.first
             : existingIconPath
@@ -294,7 +292,7 @@ public struct RepositoryScanner: Sendable {
     }
 
     private enum WorktreeOutcome {
-        case worktree(Worktree)
+        case worktree(Worktree, Int)
         /// The directory git listed no longer exists on disk.
         case pruned
         /// The directory exists but git could not report on it.
@@ -306,7 +304,7 @@ public struct RepositoryScanner: Sendable {
 
         let statusResult = git(
             record.path,
-            ["--no-optional-locks", "status", "--porcelain=v2", "--branch", "--untracked-files=normal"]
+            ["--no-optional-locks", "status", "--porcelain=v2", "--branch", "--show-stash", "--untracked-files=normal"]
         )
         guard statusResult.succeeded else {
             let name = URL(fileURLWithPath: record.path).lastPathComponent
@@ -350,7 +348,7 @@ public struct RepositoryScanner: Sendable {
             upstream: status.upstream,
             operation: operation,
             lastCommitDate: timestamp.map(Date.init(timeIntervalSince1970:))
-        ))
+        ), status.stashCount)
     }
 
     /// Builds the placeholder shown in place of a repository git refused to report on.
@@ -435,7 +433,9 @@ public struct RepositoryScanner: Sendable {
         var result = GitStatus()
 
         for line in output.split(whereSeparator: \.isNewline).map(String.init) {
-            if line.hasPrefix("# branch.head ") {
+            if line.hasPrefix("# stash ") {
+                result.stashCount = Int(line.dropFirst(8)) ?? 0
+            } else if line.hasPrefix("# branch.head ") {
                 result.branch = String(line.dropFirst(14))
             } else if line.hasPrefix("# branch.upstream ") {
                 result.upstream = String(line.dropFirst(18))
@@ -635,6 +635,7 @@ public struct WorktreeRecord: Equatable, Sendable {
 }
 
 public struct GitStatus: Equatable, Sendable {
+    public var stashCount = 0
     public var branch = ""
     public var upstream: String?
     public var staged = 0

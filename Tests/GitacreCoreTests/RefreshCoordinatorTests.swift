@@ -90,7 +90,7 @@ final class RefreshCoordinatorTests: XCTestCase {
         XCTAssertFalse(running)
     }
 
-    func testInFlightDiscoveryCoversAStatusRefreshWithTheSameConfiguration() async {
+    func testChangeDuringDiscoveryQueuesFollowUp() async {
         let gate = AsyncGate()
         let performed = ValueLog<String>()
         let configuration = ScanConfiguration(
@@ -130,7 +130,7 @@ final class RefreshCoordinatorTests: XCTestCase {
         let performedValues = await performed.values
         XCTAssertEqual(values.0, "discovery")
         XCTAssertEqual(values.1, "discovery")
-        XCTAssertEqual(performedValues, ["discovery"])
+        XCTAssertEqual(performedValues, ["discovery", "discovery"])
     }
 
     func testSupersededInFlightRequestIsRequeuedWhenNoFollowUpIsPending() async {
