@@ -7,3 +7,5 @@
 !site.webmanifest
 !appcast.xml
 !assets/**
+
+!releases.mjs

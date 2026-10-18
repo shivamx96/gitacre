@@ -4,6 +4,7 @@
   --ink: #252735;
   --muted: #666977;
   --accent: #535fc4;
+  --accent-hover: #424da9;
   --line: #e2e3ea;
   --wash: #eef0f7;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -34,10 +35,10 @@ h1 span { color: var(--accent); }
 .hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
 .button { display: inline-flex; gap: 10px; align-items: center; justify-content: center; padding: 14px 19px; border-radius: 7px; font-size: 13px; font-weight: 550; min-height: 46px; }
 .button-primary { background: var(--accent); color: white; }
-.button-primary:hover { background: #424da9; color: white; }
+.button-primary:hover { background: var(--accent-hover); color: white; }
 .button svg { width: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .button-quiet { padding-inline: 0; font-size: 12px; }
-.requirements { font-size: 11px; color: var(--muted); margin: 15px 0 0; line-height: 1.6; }
+.requirements { font-size: 12px; color: var(--muted); margin: 15px 0 0; line-height: 1.6; }
 .product-preview { background: var(--wash); border: 1px solid #e0e3ef; border-radius: 16px; padding: 16px 22px 18px; transform: rotate(1deg); }
 .preview-menubar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; color: #72778e; font-size: 9px; letter-spacing: 1px; }
 .menu-status { display: flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 5px; background: #dfe3f1; color: #454e88; letter-spacing: 0; font-size: 11px; }
@@ -69,8 +70,8 @@ h3 { font-size: 21px; font-weight: 550; letter-spacing: -.5px; margin: 0 0 12px;
 .privacy { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 25px; border-block: 1px solid var(--line); padding-block: 36px; }
 .privacy img { border-radius: 12px; }
 .privacy h2 { font-size: 21px; letter-spacing: -.5px; margin-bottom: 9px; }
-.privacy p { max-width: 650px; font-size: 13px; color: var(--muted); line-height: 1.75; margin: 0; }
-.privacy > a { font-size: 12px; color: var(--accent); white-space: nowrap; }
+.privacy p { max-width: 650px; font-size: 14px; color: var(--muted); line-height: 1.75; margin: 0; }
+.privacy > a { text-decoration: underline; font-size: 13px; color: var(--accent); white-space: nowrap; }
 .closing { padding-block: 62px 65px; text-align: center; }
 .closing .eyebrow { margin-bottom: 16px; }
 .closing h2 { margin-bottom: 25px; }
