@@ -21,6 +21,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var lastRepositoryRefresh: Date?
     @Published private(set) var isRepositorySnapshotStale = true
     private var watcher: RepositoryWatcher?
+    private var discoveryDebounce = DiscoveryDebounce()
+    private var pendingDiscovery: Task<Void, Never>?
+    private var lastGitHubSuccess: Date?
     private var watchedPaths: [String] = []
     private var wakeObserver: AnyCancellable?
     private var sleepObserver: AnyCancellable?
@@ -235,10 +238,17 @@ final class AppModel: ObservableObject {
     /// Overlapping calls coalesce into one follow-up instead of being dropped. A result
     /// is published only when no newer request has superseded it.
     func refreshRepositories(scope: RepositoryRefreshScope = .discovery, trigger: RefreshTrigger = .manual, diagnostics: DiagnosticContext? = nil) async {
+        if trigger == .panel && !BackgroundRefreshPolicy.needsPanelRefresh(
+            lastSuccess: lastRepositoryRefresh, maximumAge: 30, stale: isRepositorySnapshotStale) { return }
         repositoryGeneration += 1
         let generation = repositoryGeneration
         let started = Date()
         let resolved = resolvedScope(scope)
+        if resolved.isDiscovery {
+            discoveryDebounce.didStartDiscovery(at: ProcessInfo.processInfo.systemUptime)
+            pendingDiscovery?.cancel()
+            pendingDiscovery = nil
+        }
         let diagnosticContext = diagnostics ?? PerformanceDiagnostics.shared.context(trigger: trigger)
         PerformanceDiagnostics.shared.record(DiagnosticEvent(.requested, context: diagnosticContext, discovery: resolved.isDiscovery))
         repositoryRefreshCount += 1
@@ -298,6 +308,7 @@ final class AppModel: ObservableObject {
 
     private func githubConfigurationChanged() {
         githubGeneration += 1
+        lastGitHubSuccess = nil
         githubSnapshot = GitHubSnapshot(authentication: .cliMissing)
         attemptedDetails.removeAll()
         Task { await refreshGitHub(trigger: .configuration) }
@@ -309,6 +320,7 @@ final class AppModel: ObservableObject {
     /// single follow-up, recorded as `githubQueued`; that follow-up runs under the earliest
     /// queued request's ID so its latency counts from the first caller.
     func refreshGitHub(trigger: RefreshTrigger = .manual) async {
+        if trigger == .panel && !BackgroundRefreshPolicy.needsPanelRefresh(lastSuccess: lastGitHubSuccess, maximumAge: 120) { return }
         let diagnostics = PerformanceDiagnostics.shared
         if isLoadingGitHub {
             let context = diagnostics.context(trigger: trigger)
@@ -358,6 +370,9 @@ final class AppModel: ObservableObject {
                 duration: ProcessInfo.processInfo.systemUptime - context.since, count: snapshot.pullRequests.count,
                 changed: !sameAccount || githubSnapshot.pullRequests != snapshot.pullRequests))
             githubSnapshot = snapshot
+            if snapshot.errorMessage == nil, snapshot.authentication.login != nil {
+                lastGitHubSuccess = Date()
+            }
         } while githubRefreshPending && !Task.isCancelled
     }
 
@@ -596,7 +611,11 @@ final class AppModel: ObservableObject {
         if refreshAutomatically {
             repositoryRefreshTimer = Timer.publish(every: 60, on: .main, in: .common)
                 .autoconnect()
-                .sink { [weak self] _ in Task { await self?.refreshRepositories(scope: .status(), trigger: .statusTimer) } }
+                .sink { [weak self] _ in
+                    guard let self, self.watcher?.isActive != true else { return }
+                    self.configureWatcher()
+                    Task { await self.refreshRepositories(scope: .status(), trigger: .statusTimer) }
+                }
             discoveryTimer = Timer.publish(every: 900, on: .main, in: .common)
                 .autoconnect()
                 .sink { [weak self] _ in Task { await self?.refreshRepositories(trigger: .discoveryTimer) } }
@@ -610,25 +629,38 @@ final class AppModel: ObservableObject {
 
     private func configureWatcher() {
         let paths = refreshAutomatically ? Array(Set(roots + repositories.flatMap { [$0.commonDirectory] + $0.worktrees.map(\.path) })).sorted() : []
-        guard paths != watchedPaths else { return }
+        if !refreshAutomatically { pendingDiscovery?.cancel(); pendingDiscovery = nil }
+        guard paths != watchedPaths || watcher?.isActive != true else { return }
         watchedPaths = paths
         watcher = RepositoryWatcher(paths: paths) { [weak self] paths, rescan in
             let context = PerformanceDiagnostics.shared.context(trigger: .filesystem)
             Task { @MainActor in
                 guard let self else { return }
-                RepositoryIconCache.shared.invalidate(paths: paths)
-                let unmatched = paths.filter { path in
-                    !self.repositories.contains { $0.isAffected(byChangedPath: path) }
-                }.count
-                let discovery = rescan || unmatched > 0
-                // Git's own writes (index, refs, logs) arrive as paths inside `.git`; counting
-                // them separates tool churn from edits to tracked files.
+                guard self.refreshAutomatically else { return }
+                let batch = BackgroundRefreshPolicy.batch(paths: paths, rescan: rescan, repositories: self.repositories)
+                RepositoryIconCache.shared.invalidate(paths: batch.paths)
                 let insideGitDirectory = paths.filter { $0.contains("/.git/") || $0.hasSuffix("/.git") }.count
                 PerformanceDiagnostics.shared.record(DiagnosticEvent(.filesystem, context: context,
-                    discovery: discovery, count: paths.count, insideGitDirectory: insideGitDirectory,
-                    rescan: rescan, unmatched: unmatched))
-                await self.refreshRepositories(scope: discovery ? .discovery : .status(paths: paths), trigger: .filesystem, diagnostics: context)
+                    discovery: batch.needsDiscovery, count: paths.count, insideGitDirectory: insideGitDirectory,
+                    rescan: rescan, unmatched: batch.unmatched, ignored: batch.ignored,
+                    refreshed: batch.statusScope != nil))
+                if batch.needsDiscovery { self.scheduleFilesystemDiscovery() }
+                if let scope = batch.statusScope, self.hasLoadedRepositories {
+                    await self.refreshRepositories(scope: scope, trigger: .filesystem, diagnostics: context)
+                }
             }
+        }
+    }
+
+    private func scheduleFilesystemDiscovery() {
+        guard pendingDiscovery == nil else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let due = discoveryDebounce.request(at: now)
+        pendingDiscovery = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(max(0, due - now))) } catch { return }
+            guard let self, self.refreshAutomatically else { return }
+            self.pendingDiscovery = nil
+            await self.refreshRepositories(trigger: .filesystem)
         }
     }
 

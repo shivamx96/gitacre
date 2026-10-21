@@ -19,6 +19,21 @@ final class PerformanceDiagnosticsTests: XCTestCase {
         XCTAssertNoThrow(try JSONDecoder().decode(JSONValue.self, from: recorder.exportJSON()))
     }
 
+    func testFilesystemFilteringTotalsSurviveEviction() throws {
+        let recorder = PerformanceDiagnostics(capacity: 1)
+        let context = recorder.context(trigger: .filesystem)
+        recorder.record(DiagnosticEvent(.filesystem, context: context, discovery: false, count: 3, rescan: false, ignored: 3, refreshed: false))
+        recorder.record(DiagnosticEvent(.filesystem, context: context, discovery: true, count: 4, rescan: false, ignored: 2, refreshed: true))
+        recorder.record(DiagnosticEvent(.completed, context: context, discovery: true))
+        let snapshot = recorder.snapshot()
+        let batches = try XCTUnwrap(snapshot.aggregates["filesystem.filesystem.none"])
+        XCTAssertEqual(batches.totalIgnored, 5)
+        XCTAssertEqual(batches.fullyIgnoredBatches, 1)
+        XCTAssertEqual(batches.refreshedBatches, 1)
+        XCTAssertEqual(snapshot.aggregates["completed.filesystem.none"]?.discoveries, 1)
+        XCTAssertEqual(snapshot.schemaVersion, 1)
+    }
+
     func testConcurrentRecordingHasUniqueSequencesAndBoundedStorage() {
         let recorder = PerformanceDiagnostics(capacity: 100)
         DispatchQueue.concurrentPerform(iterations: 5_000) { _ in

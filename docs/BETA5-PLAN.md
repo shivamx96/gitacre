@@ -5,7 +5,8 @@ This release combines the research's proposed beta.5 and beta.6 implementation w
 ## Implemented
 
 - Coalesced refresh requests, configuration/publication guards, and a worker-owned baseline for targeted refreshes.
-- FSEvents invalidation with 500 ms stream coalescing, wake refresh, 60-second status fallback, and 15-minute discovery backstop.
+- FSEvents invalidation with 500 ms stream coalescing and Git metadata/lock filtering, immediate targeted status, bounded 60-second trailing discovery for unmatched paths, wake refresh, an inactive-watcher-only 60-second status fallback, and a 15-minute discovery backstop.
+- Panel-open freshness gates (30 seconds local, 120 seconds successful GitHub); session-only missing-origin/unborn-HEAD memos reset on discovery, with first commits observed immediately.
 - Configuration-scoped local snapshots, cached/stale UI, and an exact refresh-time tooltip.
 - Porcelain stash counts and retained icon caches with event-driven invalidation.
 - Canonical host/owner/repository identities and SHA-first matching; branch fallback uses the PR head repository. Multiple local matches remain explicit rather than choosing an arbitrary checkout.

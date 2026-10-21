@@ -128,6 +128,7 @@ public struct LocalSnapshot: Codable, Sendable {
 /// Keeps the latest scan baseline inside the serialized worker, even before the UI
 /// resumes its continuation. Targeted refreshes cannot restore an older unrelated row.
 public actor RepositoryRefreshWorker {
+    private let failureMemo = RepositoryFailureMemo()
     private var configuration: ScanConfiguration?
     private var repositories: [Repository] = []
     public init() {}
@@ -138,12 +139,13 @@ public actor RepositoryRefreshWorker {
         } else if !request.scope.isDiscovery {
             effective.scope = .discovery
         }
+        let failureMemo = self.failureMemo
         let input = effective
         let started = ProcessInfo.processInfo.systemUptime
         let counter = DiagnosticCommandCounter()
         let result = await Task.detached(priority: .utility) {
             DiagnosticContext.$current.withValue(input.diagnostics) {
-                DiagnosticCommandCounter.$current.withValue(counter) { RepositoryScanner.run(input) }
+                DiagnosticCommandCounter.$current.withValue(counter) { RepositoryScanner.run(input, failureMemo: failureMemo) }
             }
         }.value
         PerformanceDiagnostics.shared.record(DiagnosticEvent(.completed, context: input.diagnostics,
