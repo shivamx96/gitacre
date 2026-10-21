@@ -45,6 +45,52 @@ final class RefreshCoordinatorTests: XCTestCase {
         XCTAssertEqual(events.last?.count, 3)
     }
 
+    /// A follow-up that absorbs the superseded in-flight request keeps that request's ID,
+    /// trigger and start time, so published latency counts from the earliest caller while the
+    /// merged scope reflects every request it carries.
+    func testCoalescedFollowUpKeepsEarliestIdentityAndMergedScope() async throws {
+        let gate = AsyncGate()
+        let diagnostics = PerformanceDiagnostics()
+        let configuration = ScanConfiguration(roots: ["/tmp"], maximumDepth: 3, includeLinkedWorktrees: true, ignoredDirectoryNames: [])
+        let coordinator = RefreshCoordinator<RepositoryRefreshRequest, RepositoryRefreshOutcome>(
+            coalesce: { $0.coalescing($1) },
+            covers: { $0.covers($1) },
+            observe: { kind, request, related, count in
+                diagnostics.record(DiagnosticEvent(kind, context: request.diagnostics,
+                    discovery: request.scope.isDiscovery, count: count, relatedRequestID: related?.diagnostics?.id))
+            },
+            perform: { request in
+                if request.diagnostics?.trigger == .statusTimer, !request.scope.isDiscovery { await gate.wait() }
+                return RepositoryRefreshOutcome(repositories: [], scope: request.scope, diagnostics: request.diagnostics)
+            }
+        )
+        let timer = diagnostics.context(trigger: .statusTimer)
+        let filesystem = diagnostics.context(trigger: .filesystem)
+
+        let first = Task { await coordinator.submit(RepositoryRefreshRequest(configuration: configuration, scope: .status(), diagnostics: timer)) }
+        await gate.waitUntilEntered()
+        let second = Task { await coordinator.submit(RepositoryRefreshRequest(configuration: configuration, scope: .discovery, diagnostics: filesystem)) }
+        await coordinator.waitUntilWaiterCount(2)
+        await gate.open()
+
+        let outcomes = await (first.value, second.value)
+        XCTAssertEqual(outcomes.0.diagnostics, timer, "the follow-up runs under the earliest request")
+        XCTAssertEqual(outcomes.1.diagnostics, timer)
+        XCTAssertTrue(outcomes.1.scope.isDiscovery)
+
+        let events = diagnostics.snapshot().events
+        XCTAssertEqual(events.map(\.kind), [.started, .queued, .superseded, .started])
+        XCTAssertEqual(events.map(\.requestID), [timer.id, filesystem.id, timer.id, timer.id])
+        let queued = try XCTUnwrap(events.first { $0.kind == .queued })
+        XCTAssertEqual(queued.relatedRequestID, timer.id)
+        XCTAssertEqual(queued.trigger, .filesystem)
+        XCTAssertEqual(queued.discovery, true)
+        let followUp = try XCTUnwrap(events.last)
+        XCTAssertEqual(followUp.trigger, .statusTimer, "trigger attribution stays with the earliest request")
+        XCTAssertEqual(followUp.discovery, true, "scope is the merged scope, not the earliest request's")
+        XCTAssertEqual(followUp.count, 2)
+    }
+
     /// The in-flight request's result is discarded once superseded, so its work has to be
     /// folded into the follow-up alongside every request queued behind it.
     func testSupersededInFlightRequestIsCombinedWithEveryQueuedFollowUp() async {

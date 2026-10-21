@@ -29,6 +29,9 @@ final class AppModel: ObservableObject {
     private var repositoryGeneration = 0
     private var githubGeneration = 0
     private var githubRefreshPending = false
+    private var githubActiveRequestID: UInt64?
+    /// The earliest refresh queued behind the active one; the follow-up runs under its ID.
+    private var githubQueuedContext: DiagnosticContext?
     private var enrichingPRs = Set<String>()
     private var attemptedDetails: [String: Date] = [:]
     @Published var notifyPRTransitions = UserDefaults.standard.bool(forKey: "notifyPRTransitions") {
@@ -49,7 +52,13 @@ final class AppModel: ObservableObject {
     private func configurationChanged() {
         repositoryGeneration += 1
         isRepositorySnapshotStale = true
+        recordConfiguration()
         Task { await refreshRepositories(trigger: .configuration) }
+    }
+
+    private func recordConfiguration() {
+        PerformanceDiagnostics.shared.record(DiagnosticEvent(.configuration, count: roots.count,
+            automaticRefresh: refreshAutomatically, githubPolling: pollPullRequests))
     }
 
     @Published private(set) var isLaunchAtLoginEnabled: Bool
@@ -291,32 +300,63 @@ final class AppModel: ObservableObject {
         githubGeneration += 1
         githubSnapshot = GitHubSnapshot(authentication: .cliMissing)
         attemptedDetails.removeAll()
-        Task { await refreshGitHub() }
+        Task { await refreshGitHub(trigger: .configuration) }
     }
 
+    /// Loads pull requests through the GitHub CLI.
+    ///
+    /// Only one load runs at a time. Calls that arrive while one is active collapse into a
+    /// single follow-up, recorded as `githubQueued`; that follow-up runs under the earliest
+    /// queued request's ID so its latency counts from the first caller.
     func refreshGitHub(trigger: RefreshTrigger = .manual) async {
-        if isLoadingGitHub { githubRefreshPending = true; return }
+        let diagnostics = PerformanceDiagnostics.shared
+        if isLoadingGitHub {
+            let context = diagnostics.context(trigger: trigger)
+            diagnostics.record(DiagnosticEvent(.githubQueued, context: context, relatedRequestID: githubActiveRequestID))
+            if githubQueuedContext == nil { githubQueuedContext = context }
+            githubRefreshPending = true
+            return
+        }
         isLoadingGitHub = true
-        defer { isLoadingGitHub = false }
+        defer { isLoadingGitHub = false; githubActiveRequestID = nil; githubQueuedContext = nil }
+        var context = diagnostics.context(trigger: trigger)
+        diagnostics.record(DiagnosticEvent(.githubRequested, context: context))
         repeat {
+            if let queued = githubQueuedContext { context = queued; githubQueuedContext = nil }
             githubRefreshPending = false
+            githubActiveRequestID = context.id
             let generation = githubGeneration
             let preferredPath = preferredGitHubCLIPath.isEmpty ? nil : preferredGitHubCLIPath
             let cacheURL = Self.githubCacheURL()
             let organizations = githubOrganizations.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
             let local = repositories
-            let context = PerformanceDiagnostics.shared.context(trigger: trigger)
-            let snapshot = await Task.detached(priority: .utility) {
-                DiagnosticContext.$current.withValue(context) { GitHubCLIService().loadPullRequests(preferredPath: preferredPath, cacheURL: cacheURL,
-                    organizations: organizations, localRepositories: local) }
+            let started = ProcessInfo.processInfo.systemUptime
+            let counter = DiagnosticCommandCounter()
+            let input = context
+            let snapshot: GitHubSnapshot = await Task.detached(priority: .utility) {
+                DiagnosticContext.$current.withValue(input) {
+                    DiagnosticCommandCounter.$current.withValue(counter) {
+                        GitHubCLIService().loadPullRequests(preferredPath: preferredPath, cacheURL: cacheURL,
+                            organizations: organizations, localRepositories: local)
+                    }
+                }
             }.value
-            guard generation == githubGeneration, !Task.isCancelled else { continue }
+            diagnostics.record(DiagnosticEvent(.githubCompleted, context: context,
+                duration: ProcessInfo.processInfo.systemUptime - started, count: snapshot.pullRequests.count,
+                failed: snapshot.errorMessage != nil || snapshot.authentication.login == nil, commandCount: counter.count))
+            guard generation == githubGeneration, !Task.isCancelled else {
+                diagnostics.record(DiagnosticEvent(.githubSkipped, context: context))
+                continue
+            }
             let sameAccount = githubSnapshot.authentication.login == snapshot.authentication.login
             if sameAccount, snapshot.errorMessage == nil {
                 if notifyReviewRequests, githubSnapshot.fetchedAt != nil { notifyAboutNewReviews(in: snapshot.pullRequests) }
                 if notifyPRTransitions { notifyTransitions(from: githubSnapshot.pullRequests, to: snapshot.pullRequests) }
             }
             knownReviewRequestIDs = Set(snapshot.pullRequests.filter { $0.kind == .reviewRequested }.map(\.id))
+            diagnostics.record(DiagnosticEvent(.githubPublished, context: context,
+                duration: ProcessInfo.processInfo.systemUptime - context.since, count: snapshot.pullRequests.count,
+                changed: !sameAccount || githubSnapshot.pullRequests != snapshot.pullRequests))
             githubSnapshot = snapshot
         } while githubRefreshPending && !Task.isCancelled
     }
@@ -331,8 +371,9 @@ final class AppModel: ObservableObject {
         enrichingPRs.insert(request.id)
         attemptedDetails[request.id] = Date()
         defer { enrichingPRs.remove(request.id) }
+        let context = PerformanceDiagnostics.shared.context(trigger: .detail)
         let details = await Task.detached(priority: .utility) {
-            GitHubCLIService().loadDetails(for: request, executable: executable)
+            DiagnosticContext.$current.withValue(context) { GitHubCLIService().loadDetails(for: request, executable: executable) }
         }.value
         guard generation == githubGeneration, login == githubSnapshot.authentication.login,
               let details, !Task.isCancelled,
@@ -547,8 +588,7 @@ final class AppModel: ObservableObject {
     }
 
     private func configureTimers() {
-        PerformanceDiagnostics.shared.record(DiagnosticEvent(.configuration, count: roots.count,
-            automaticRefresh: refreshAutomatically, githubPolling: pollPullRequests))
+        recordConfiguration()
         repositoryRefreshTimer?.cancel()
         discoveryTimer?.cancel()
         configureWatcher()
@@ -581,9 +621,12 @@ final class AppModel: ObservableObject {
                     !self.repositories.contains { $0.isAffected(byChangedPath: path) }
                 }.count
                 let discovery = rescan || unmatched > 0
+                // Git's own writes (index, refs, logs) arrive as paths inside `.git`; counting
+                // them separates tool churn from edits to tracked files.
+                let insideGitDirectory = paths.filter { $0.contains("/.git/") || $0.hasSuffix("/.git") }.count
                 PerformanceDiagnostics.shared.record(DiagnosticEvent(.filesystem, context: context,
-                    discovery: discovery, count: paths.count, ignored: 0, rescan: rescan,
-                    unmatched: unmatched))
+                    discovery: discovery, count: paths.count, insideGitDirectory: insideGitDirectory,
+                    rescan: rescan, unmatched: unmatched))
                 await self.refreshRepositories(scope: discovery ? .discovery : .status(paths: paths), trigger: .filesystem, diagnostics: context)
             }
         }

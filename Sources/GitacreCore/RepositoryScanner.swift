@@ -22,6 +22,7 @@ public struct RepositoryScanner: Sendable {
     }
 
     public func scan(roots: [String]) -> [Repository] {
+        let discoveryStarted = ProcessInfo.processInfo.systemUptime
         let checkouts = discoverCheckouts(roots: roots)
 
         // Each checkout costs a `git rev-parse`, and each repository six more git calls.
@@ -48,7 +49,11 @@ public struct RepositoryScanner: Sendable {
             }
         }
 
-        PerformanceDiagnostics.shared.record(DiagnosticEvent(.selected, discovery: true, count: representatives.count))
+        // `duration` covers the root walk and one `rev-parse` per checkout, before any
+        // per-repository work starts; `worktrees` is the number of checkouts that walk found.
+        PerformanceDiagnostics.shared.record(DiagnosticEvent(.selected,
+            duration: ProcessInfo.processInfo.systemUptime - discoveryStarted, discovery: true,
+            count: representatives.count, worktrees: checkouts.count, failed: !unreadable.isEmpty))
         let readable = Self.concurrentMap(representatives) { representative in
             makeRepository(commonDirectory: representative.commonDirectory, checkout: representative.checkout)
         }
@@ -97,7 +102,8 @@ public struct RepositoryScanner: Sendable {
             selected = repositories.enumerated().map { ($0.offset, $0.element) }
         }
 
-        PerformanceDiagnostics.shared.record(DiagnosticEvent(.selected, count: selected.count, worktrees: selected.reduce(0) { $0 + $1.1.worktrees.count }))
+        PerformanceDiagnostics.shared.record(DiagnosticEvent(.selected, discovery: false,
+            count: selected.count, worktrees: selected.reduce(0) { $0 + $1.1.worktrees.count }))
         let refreshed = Self.concurrentMap(selected) { pair in
             (pair.0, refresh(pair.1))
         }
