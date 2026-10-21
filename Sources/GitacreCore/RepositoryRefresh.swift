@@ -49,13 +49,16 @@ public enum RepositoryRefreshScope: Equatable, Sendable {
 public struct RepositoryRefreshRequest: Equatable, Sendable {
     public var configuration: ScanConfiguration
     public var scope: RepositoryRefreshScope
+    public var diagnostics: DiagnosticContext?
     public var knownRepositories: [Repository]
 
     public init(
         configuration: ScanConfiguration,
         scope: RepositoryRefreshScope,
-        knownRepositories: [Repository] = []
+        knownRepositories: [Repository] = [],
+        diagnostics: DiagnosticContext? = nil
     ) {
+        self.diagnostics = diagnostics
         self.configuration = configuration
         self.scope = scope
         self.knownRepositories = knownRepositories
@@ -76,7 +79,8 @@ public struct RepositoryRefreshRequest: Equatable, Sendable {
         return RepositoryRefreshRequest(
             configuration: configuration,
             scope: scope.merging(next.scope),
-            knownRepositories: next.knownRepositories
+            knownRepositories: next.knownRepositories,
+            diagnostics: diagnostics ?? next.diagnostics
         )
     }
 
@@ -86,9 +90,11 @@ public struct RepositoryRefreshRequest: Equatable, Sendable {
 }
 
 public struct RepositoryRefreshOutcome: Equatable, Sendable {
+    public var diagnostics: DiagnosticContext?
     public var repositories: [Repository]
     public var scope: RepositoryRefreshScope
-    public init(repositories: [Repository], scope: RepositoryRefreshScope) {
+    public init(repositories: [Repository], scope: RepositoryRefreshScope, diagnostics: DiagnosticContext? = nil) {
+        self.diagnostics = diagnostics
         self.repositories = repositories
         self.scope = scope
     }
@@ -133,9 +139,19 @@ public actor RepositoryRefreshWorker {
             effective.scope = .discovery
         }
         let input = effective
-        let result = await Task.detached(priority: .utility) { RepositoryScanner.run(input) }.value
+        let started = ProcessInfo.processInfo.systemUptime
+        let counter = DiagnosticCommandCounter()
+        let result = await Task.detached(priority: .utility) {
+            DiagnosticContext.$current.withValue(input.diagnostics) {
+                DiagnosticCommandCounter.$current.withValue(counter) { RepositoryScanner.run(input) }
+            }
+        }.value
+        PerformanceDiagnostics.shared.record(DiagnosticEvent(.completed, context: input.diagnostics,
+            duration: ProcessInfo.processInfo.systemUptime - started, discovery: input.scope.isDiscovery,
+            count: result.count, worktrees: result.reduce(0) { $0 + $1.worktrees.count },
+            failed: result.contains { $0.scanFailure != nil }, commandCount: counter.count))
         configuration = request.configuration
         repositories = result
-        return RepositoryRefreshOutcome(repositories: result, scope: effective.scope)
+        return RepositoryRefreshOutcome(repositories: result, scope: effective.scope, diagnostics: effective.diagnostics)
     }
 }

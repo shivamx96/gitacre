@@ -4,6 +4,7 @@ import Foundation
 import GitacreCore
 import ServiceManagement
 import UserNotifications
+import UniformTypeIdentifiers
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -22,11 +23,15 @@ final class AppModel: ObservableObject {
     private var watcher: RepositoryWatcher?
     private var watchedPaths: [String] = []
     private var wakeObserver: AnyCancellable?
+    private var sleepObserver: AnyCancellable?
     private var discoveryTimer: AnyCancellable?
     private var lastRefreshDuration: TimeInterval = 0
     private var repositoryGeneration = 0
     private var githubGeneration = 0
     private var githubRefreshPending = false
+    private var githubActiveRequestID: UInt64?
+    /// The earliest refresh queued behind the active one; the follow-up runs under its ID.
+    private var githubQueuedContext: DiagnosticContext?
     private var enrichingPRs = Set<String>()
     private var attemptedDetails: [String: Date] = [:]
     @Published var notifyPRTransitions = UserDefaults.standard.bool(forKey: "notifyPRTransitions") {
@@ -47,7 +52,13 @@ final class AppModel: ObservableObject {
     private func configurationChanged() {
         repositoryGeneration += 1
         isRepositorySnapshotStale = true
-        Task { await refreshRepositories() }
+        recordConfiguration()
+        Task { await refreshRepositories(trigger: .configuration) }
+    }
+
+    private func recordConfiguration() {
+        PerformanceDiagnostics.shared.record(DiagnosticEvent(.configuration, count: roots.count,
+            automaticRefresh: refreshAutomatically, githubPolling: pollPullRequests))
     }
 
     @Published private(set) var isLaunchAtLoginEnabled: Bool
@@ -83,6 +94,10 @@ final class AppModel: ObservableObject {
     private lazy var repositoryRefresh = RefreshCoordinator<RepositoryRefreshRequest, RepositoryRefreshOutcome>(
         coalesce: { $0.coalescing($1) },
         covers: { $0.covers($1) },
+        observe: { kind, request, related, count in
+            PerformanceDiagnostics.shared.record(DiagnosticEvent(kind, context: request.diagnostics,
+                discovery: request.scope.isDiscovery, count: count, relatedRequestID: related?.diagnostics?.id))
+        },
         perform: { [repositoryWorker] request in
             await repositoryWorker.run(request)
         }
@@ -141,11 +156,14 @@ final class AppModel: ObservableObject {
             .sink { [weak self] _ in
                 guard let self else { return }
                 self.isRepositorySnapshotStale = true
-                if self.refreshAutomatically { Task { await self.refreshAll(scope: .status()) } }
+                PerformanceDiagnostics.shared.record(DiagnosticEvent(.wake))
+                if self.refreshAutomatically { Task { await self.refreshAll(scope: .status(), trigger: .wake) } }
             }
+        sleepObserver = NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)
+            .sink { _ in PerformanceDiagnostics.shared.record(DiagnosticEvent(.sleep)) }
         refreshTerminalApplications()
         configureTimers()
-        Task { [weak self] in await self?.refreshAll() }
+        Task { [weak self] in await self?.refreshAll(trigger: .startup) }
     }
 
     var remoteAttentionRepositoryIDs: Set<String> {
@@ -206,9 +224,9 @@ final class AppModel: ObservableObject {
     /// Defaults to discovery so every explicit "refresh" control picks up newly cloned
     /// repositories. Ambient callers that fire on their own — opening the popover —
     /// pass `.status()` to avoid re-walking the monitored roots each time.
-    func refreshAll(scope: RepositoryRefreshScope = .discovery) async {
-        async let repositories: Void = refreshRepositories(scope: scope)
-        async let github: Void = refreshGitHub()
+    func refreshAll(scope: RepositoryRefreshScope = .discovery, trigger: RefreshTrigger = .manual) async {
+        async let repositories: Void = refreshRepositories(scope: scope, trigger: trigger)
+        async let github: Void = refreshGitHub(trigger: trigger)
         _ = await (repositories, github)
     }
 
@@ -216,11 +234,13 @@ final class AppModel: ObservableObject {
     ///
     /// Overlapping calls coalesce into one follow-up instead of being dropped. A result
     /// is published only when no newer request has superseded it.
-    func refreshRepositories(scope: RepositoryRefreshScope = .discovery) async {
+    func refreshRepositories(scope: RepositoryRefreshScope = .discovery, trigger: RefreshTrigger = .manual, diagnostics: DiagnosticContext? = nil) async {
         repositoryGeneration += 1
         let generation = repositoryGeneration
         let started = Date()
         let resolved = resolvedScope(scope)
+        let diagnosticContext = diagnostics ?? PerformanceDiagnostics.shared.context(trigger: trigger)
+        PerformanceDiagnostics.shared.record(DiagnosticEvent(.requested, context: diagnosticContext, discovery: resolved.isDiscovery))
         repositoryRefreshCount += 1
         isLoadingRepositories = true
         defer {
@@ -238,10 +258,17 @@ final class AppModel: ObservableObject {
                 ignoredDirectoryNames: ignoredDirectories
             ),
             scope: resolved,
-            knownRepositories: resolved.isDiscovery ? [] : repositories
+            knownRepositories: resolved.isDiscovery ? [] : repositories,
+            diagnostics: diagnosticContext
         )
         let outcome = await repositoryRefresh.submit(request)
-        guard !Task.isCancelled, generation == repositoryGeneration, request.configuration == scanConfiguration else { return }
+        guard !Task.isCancelled, generation == repositoryGeneration, request.configuration == scanConfiguration else {
+            PerformanceDiagnostics.shared.record(DiagnosticEvent(.publicationSkipped, context: diagnosticContext))
+            return
+        }
+        PerformanceDiagnostics.shared.record(DiagnosticEvent(.published, context: outcome.diagnostics,
+            duration: ProcessInfo.processInfo.systemUptime - (outcome.diagnostics?.since ?? diagnosticContext.since),
+            count: outcome.repositories.count, changed: repositories != outcome.repositories))
 
         if outcome.scope.isDiscovery {
             RepositoryIconCache.shared.invalidate()
@@ -273,31 +300,63 @@ final class AppModel: ObservableObject {
         githubGeneration += 1
         githubSnapshot = GitHubSnapshot(authentication: .cliMissing)
         attemptedDetails.removeAll()
-        Task { await refreshGitHub() }
+        Task { await refreshGitHub(trigger: .configuration) }
     }
 
-    func refreshGitHub() async {
-        if isLoadingGitHub { githubRefreshPending = true; return }
+    /// Loads pull requests through the GitHub CLI.
+    ///
+    /// Only one load runs at a time. Calls that arrive while one is active collapse into a
+    /// single follow-up, recorded as `githubQueued`; that follow-up runs under the earliest
+    /// queued request's ID so its latency counts from the first caller.
+    func refreshGitHub(trigger: RefreshTrigger = .manual) async {
+        let diagnostics = PerformanceDiagnostics.shared
+        if isLoadingGitHub {
+            let context = diagnostics.context(trigger: trigger)
+            diagnostics.record(DiagnosticEvent(.githubQueued, context: context, relatedRequestID: githubActiveRequestID))
+            if githubQueuedContext == nil { githubQueuedContext = context }
+            githubRefreshPending = true
+            return
+        }
         isLoadingGitHub = true
-        defer { isLoadingGitHub = false }
+        defer { isLoadingGitHub = false; githubActiveRequestID = nil; githubQueuedContext = nil }
+        var context = diagnostics.context(trigger: trigger)
+        diagnostics.record(DiagnosticEvent(.githubRequested, context: context))
         repeat {
+            if let queued = githubQueuedContext { context = queued; githubQueuedContext = nil }
             githubRefreshPending = false
+            githubActiveRequestID = context.id
             let generation = githubGeneration
             let preferredPath = preferredGitHubCLIPath.isEmpty ? nil : preferredGitHubCLIPath
             let cacheURL = Self.githubCacheURL()
             let organizations = githubOrganizations.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
             let local = repositories
-            let snapshot = await Task.detached(priority: .utility) {
-                GitHubCLIService().loadPullRequests(preferredPath: preferredPath, cacheURL: cacheURL,
-                    organizations: organizations, localRepositories: local)
+            let started = ProcessInfo.processInfo.systemUptime
+            let counter = DiagnosticCommandCounter()
+            let input = context
+            let snapshot: GitHubSnapshot = await Task.detached(priority: .utility) {
+                DiagnosticContext.$current.withValue(input) {
+                    DiagnosticCommandCounter.$current.withValue(counter) {
+                        GitHubCLIService().loadPullRequests(preferredPath: preferredPath, cacheURL: cacheURL,
+                            organizations: organizations, localRepositories: local)
+                    }
+                }
             }.value
-            guard generation == githubGeneration, !Task.isCancelled else { continue }
+            diagnostics.record(DiagnosticEvent(.githubCompleted, context: context,
+                duration: ProcessInfo.processInfo.systemUptime - started, count: snapshot.pullRequests.count,
+                failed: snapshot.errorMessage != nil || snapshot.authentication.login == nil, commandCount: counter.count))
+            guard generation == githubGeneration, !Task.isCancelled else {
+                diagnostics.record(DiagnosticEvent(.githubSkipped, context: context))
+                continue
+            }
             let sameAccount = githubSnapshot.authentication.login == snapshot.authentication.login
             if sameAccount, snapshot.errorMessage == nil {
                 if notifyReviewRequests, githubSnapshot.fetchedAt != nil { notifyAboutNewReviews(in: snapshot.pullRequests) }
                 if notifyPRTransitions { notifyTransitions(from: githubSnapshot.pullRequests, to: snapshot.pullRequests) }
             }
             knownReviewRequestIDs = Set(snapshot.pullRequests.filter { $0.kind == .reviewRequested }.map(\.id))
+            diagnostics.record(DiagnosticEvent(.githubPublished, context: context,
+                duration: ProcessInfo.processInfo.systemUptime - context.since, count: snapshot.pullRequests.count,
+                changed: !sameAccount || githubSnapshot.pullRequests != snapshot.pullRequests))
             githubSnapshot = snapshot
         } while githubRefreshPending && !Task.isCancelled
     }
@@ -312,8 +371,9 @@ final class AppModel: ObservableObject {
         enrichingPRs.insert(request.id)
         attemptedDetails[request.id] = Date()
         defer { enrichingPRs.remove(request.id) }
+        let context = PerformanceDiagnostics.shared.context(trigger: .detail)
         let details = await Task.detached(priority: .utility) {
-            GitHubCLIService().loadDetails(for: request, executable: executable)
+            DiagnosticContext.$current.withValue(context) { GitHubCLIService().loadDetails(for: request, executable: executable) }
         }.value
         guard generation == githubGeneration, login == githubSnapshot.authentication.login,
               let details, !Task.isCancelled,
@@ -378,17 +438,17 @@ final class AppModel: ObservableObject {
         }
         guard !additions.isEmpty else { return }
         roots = Array(Set(roots + additions)).sorted()
-        Task { await refreshRepositories() }
+        Task { await refreshRepositories(trigger: .configuration) }
     }
 
     func removeRepositoryRoot(_ path: String) {
         roots.removeAll { $0 == path }
-        Task { await refreshRepositories() }
+        Task { await refreshRepositories(trigger: .configuration) }
     }
 
     func moveRoots(from source: IndexSet, to destination: Int) {
         roots.move(fromOffsets: source, toOffset: destination)
-        Task { await refreshRepositories() }
+        Task { await refreshRepositories(trigger: .configuration) }
     }
 
     func chooseGitHubCLI() {
@@ -486,6 +546,18 @@ final class AppModel: ObservableObject {
         NSPasteboard.general.setString(report, forType: .string)
     }
 
+    func exportPerformanceDiagnostics() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "gitacre-performance.json"
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try PerformanceDiagnostics.shared.exportJSON().write(to: url, options: .atomic)
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
     func reveal(_ path: String) {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     }
@@ -516,6 +588,7 @@ final class AppModel: ObservableObject {
     }
 
     private func configureTimers() {
+        recordConfiguration()
         repositoryRefreshTimer?.cancel()
         discoveryTimer?.cancel()
         configureWatcher()
@@ -523,15 +596,15 @@ final class AppModel: ObservableObject {
         if refreshAutomatically {
             repositoryRefreshTimer = Timer.publish(every: 60, on: .main, in: .common)
                 .autoconnect()
-                .sink { [weak self] _ in Task { await self?.refreshRepositories(scope: .status()) } }
+                .sink { [weak self] _ in Task { await self?.refreshRepositories(scope: .status(), trigger: .statusTimer) } }
             discoveryTimer = Timer.publish(every: 900, on: .main, in: .common)
                 .autoconnect()
-                .sink { [weak self] _ in Task { await self?.refreshRepositories() } }
+                .sink { [weak self] _ in Task { await self?.refreshRepositories(trigger: .discoveryTimer) } }
         }
         if pollPullRequests {
             pullRequestRefreshTimer = Timer.publish(every: 300, on: .main, in: .common)
                 .autoconnect()
-                .sink { [weak self] _ in Task { await self?.refreshGitHub() } }
+                .sink { [weak self] _ in Task { await self?.refreshGitHub(trigger: .githubTimer) } }
         }
     }
 
@@ -540,13 +613,21 @@ final class AppModel: ObservableObject {
         guard paths != watchedPaths else { return }
         watchedPaths = paths
         watcher = RepositoryWatcher(paths: paths) { [weak self] paths, rescan in
+            let context = PerformanceDiagnostics.shared.context(trigger: .filesystem)
             Task { @MainActor in
                 guard let self else { return }
                 RepositoryIconCache.shared.invalidate(paths: paths)
-                let discovery = rescan || paths.contains { path in
+                let unmatched = paths.filter { path in
                     !self.repositories.contains { $0.isAffected(byChangedPath: path) }
-                }
-                await self.refreshRepositories(scope: discovery ? .discovery : .status(paths: paths))
+                }.count
+                let discovery = rescan || unmatched > 0
+                // Git's own writes (index, refs, logs) arrive as paths inside `.git`; counting
+                // them separates tool churn from edits to tracked files.
+                let insideGitDirectory = paths.filter { $0.contains("/.git/") || $0.hasSuffix("/.git") }.count
+                PerformanceDiagnostics.shared.record(DiagnosticEvent(.filesystem, context: context,
+                    discovery: discovery, count: paths.count, insideGitDirectory: insideGitDirectory,
+                    rescan: rescan, unmatched: unmatched))
+                await self.refreshRepositories(scope: discovery ? .discovery : .status(paths: paths), trigger: .filesystem, diagnostics: context)
             }
         }
     }

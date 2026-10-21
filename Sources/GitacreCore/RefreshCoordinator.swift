@@ -18,6 +18,7 @@ public actor RefreshCoordinator<Request: Sendable, Value: Sendable> {
     private let coalesce: Coalesce
     private let covers: Covers
     private let perform: Perform
+    private let observe: @Sendable (DiagnosticKind, Request, Request?, Int) -> Void
 
     private var running = false
     private var generation: UInt64 = 0
@@ -34,11 +35,13 @@ public actor RefreshCoordinator<Request: Sendable, Value: Sendable> {
     public init(
         coalesce: @escaping Coalesce,
         covers: @escaping Covers = { _, _ in false },
+        observe: @escaping @Sendable (DiagnosticKind, Request, Request?, Int) -> Void = { _, _, _, _ in },
         perform: @escaping Perform
     ) {
         self.coalesce = coalesce
         self.covers = covers
         self.perform = perform
+        self.observe = observe
     }
 
     /// Enqueue `request` and wait until a non-superseded run that includes it finishes.
@@ -48,12 +51,14 @@ public actor RefreshCoordinator<Request: Sendable, Value: Sendable> {
     @discardableResult
     public func submit(_ request: Request) async -> Value {
         if let pending {
+            observe(.combined, request, pending.request, waiters.count + 1)
             generation += 1
             self.pending = PendingRequest(
                 generation: generation,
                 request: coalesce(pending.request, request)
             )
         } else if let inFlight {
+            observe(.queued, request, inFlight.request, waiters.count + 1)
             if covers(inFlight.request, request) {
                 // The active run already includes this request; just wait for it.
             } else {
@@ -107,12 +112,14 @@ public actor RefreshCoordinator<Request: Sendable, Value: Sendable> {
             pending = nil
             inFlight = next
             let startedGeneration = next.generation
+            observe(.started, next.request, nil, waiters.count)
             let value = await perform(next.request)
             inFlight = nil
             // `submit` cannot interleave here: this actor is isolated again only after
             // `perform` returns, so a newer request would already have stored `pending`
             // and incremented `generation`.
             if pending != nil || startedGeneration != generation {
+                observe(.superseded, next.request, pending?.request, waiters.count)
                 continue
             }
             let currentWaiters = waiters
