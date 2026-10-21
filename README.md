@@ -83,3 +83,52 @@ swift test
 - Bugs and feature requests can be reported through [GitHub Issues](https://github.com/shivamx96/gitacre/issues).
 
 gitacre is currently prerelease software.
+
+### Performance diagnostics
+
+Settings → Advanced → **Export performance…** saves a versioned JSON snapshot.
+Recording is always in memory: the newest 2,000 fixed-shape events plus session
+aggregates. Nothing is periodically written to disk. Restarting the app starts a
+new session. Export before quitting, ideally immediately after reproducing a spike.
+
+The timeline records local refresh triggers, requested/selected scope, queued and
+combined requests, scan completion, superseded results, publication, Git/CLI
+commands, filesystem batches, panel visibility, sleep/wake, and automatic-refresh
+settings. `requestID` correlates work; `relatedRequestID` connects a queued request
+to the active or pending request. Coalesced work retains the earliest request's ID,
+trigger and timestamp, so completion totals are attributed to that first trigger;
+individual incoming triggers remain visible as request/queue events.
+
+Event fields are deliberately fixed and contain no paths, URLs, branch names,
+arguments, output, or file contents. Repository/worktree identifiers are
+process-randomized Swift hashes, stable only within that process; they are not
+cryptographic anonymization. No growing repository identity map is retained.
+The existing **Copy report** remains a separate configuration report.
+
+Reading an export:
+
+- `aggregates` keys are `event.trigger.command`; counters and duration histograms
+  cover the entire session, even after timeline entries have been overwritten.
+- `overwritten` reports discarded timeline entries; `sequence` preserves order.
+- `selected.count` is repositories actually selected for scanning;
+  `completed.count` and `worktrees` describe the resulting full snapshot.
+  `completed.commandCount` counts subprocesses in that scan, including discovery.
+- Filesystem `count` means unique paths in a delivered batch, not raw OS events.
+  `unmatched` counts paths outside known repositories; `rescan` indicates OS flags
+  requiring discovery. `ignored` is currently zero: this instrumentation does not
+  change filtering or refresh policy.
+- Queue/start `count` is waiting callers, not concurrent scans. There is at most
+  one active scan and one pending combined scan. `superseded` means a worker result
+  was discarded; `publicationSkipped` means an individual UI caller was obsolete.
+- `published.duration` measures earliest request/batch delivery to model publication,
+  including queueing and superseded scans. It is not physical-write-to-screen latency.
+  `changed: false` identifies publications with unchanged repository data.
+- Duration bucket upper bounds are 10ms, 50ms, 100ms, 500ms, 1s, 5s, 30s, then infinity.
+  Durations use monotonic uptime. Command durations are elapsed time, **not CPU time**;
+  concurrent command durations can exceed total scan time. CPU/energy attribution
+  still requires external measurement including child processes.
+- CLI commands outside a local scan are recorded too. GitHub polling commands carry
+  their trigger; other standalone commands may have no request context.
+
+Run `swift test --filter PerformanceDiagnosticsTests` for ring eviction, concurrent
+recording, context propagation, export, classification and command failure checks.

@@ -38,10 +38,19 @@ public struct ProcessRunner: ProcessRunning {
     }
 
     public func run(executable: String, arguments: [String]) -> ProcessResult {
-        let started = Date()
+        DiagnosticCommandCounter.current?.increment()
+        let started = ProcessInfo.processInfo.systemUptime
+        var exitStatus: Int32 = -1
         var failed = true
         var didTimeOut = false
-        defer { ProcessDiagnostics.shared.record(duration: Date().timeIntervalSince(started), failed: failed, timedOut: didTimeOut) }
+        defer {
+            let duration = ProcessInfo.processInfo.systemUptime - started
+            ProcessDiagnostics.shared.record(duration: duration, failed: failed, timedOut: didTimeOut)
+            PerformanceDiagnostics.shared.record(DiagnosticEvent(.command,
+                command: DiagnosticCommand.classify(executable: executable, arguments: arguments),
+                worktree: arguments.first == "-C" && arguments.count > 1 ? arguments[1].hashValue : nil,
+                duration: duration, failed: failed, timedOut: didTimeOut, exitStatus: exitStatus))
+        }
         let process = Process()
         let standardOutput = Pipe()
         let standardError = Pipe()
@@ -77,6 +86,7 @@ public struct ProcessRunner: ProcessRunning {
         draining.wait()
         process.waitUntilExit()
 
+        exitStatus = process.terminationStatus
         didTimeOut = timedOut
         failed = timedOut || process.terminationStatus != 0
         if timedOut {

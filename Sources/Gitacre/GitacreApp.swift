@@ -1,3 +1,4 @@
+import GitacreCore
 import AppKit
 import Combine
 import SwiftUI
@@ -135,9 +136,10 @@ final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         guard let button = statusItem?.button else { return }
         if !popover.isShown {
             NSApp.activate(ignoringOtherApps: true)
+            PerformanceDiagnostics.shared.record(DiagnosticEvent(.panelOpened))
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
-            if model.refreshAutomatically { Task { await model.refreshAll(scope: .status()) } }
+            if model.refreshAutomatically { Task { await model.refreshAll(scope: .status(), trigger: .panel) } }
         }
     }
 
@@ -199,6 +201,7 @@ final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
 
 extension GitacreAppDelegate: NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) {
+        PerformanceDiagnostics.shared.record(DiagnosticEvent(.panelClosed))
         if settingsWindow?.isVisible != true { NSApp.hide(nil) }
     }
 }

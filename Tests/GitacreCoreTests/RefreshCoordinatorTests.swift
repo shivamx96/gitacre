@@ -4,9 +4,15 @@ import XCTest
 final class RefreshCoordinatorTests: XCTestCase {
     func testOverlappingRequestsCoalesceIntoOneFollowUpAndDiscardStaleResults() async {
         let gate = AsyncGate()
+        let diagnostics = PerformanceDiagnostics()
         let performed = ValueLog<Int>()
         let coordinator = RefreshCoordinator<Int, Int>(
             coalesce: { _, next in next },
+            observe: { kind, request, related, count in
+                let context = DiagnosticContext(id: UInt64(request), trigger: .manual, since: 0)
+                diagnostics.record(DiagnosticEvent(kind, context: context, count: count,
+                    relatedRequestID: related.map(UInt64.init)))
+            },
             perform: { request in
                 await performed.append(request)
                 if request == 1 {
@@ -32,6 +38,11 @@ final class RefreshCoordinatorTests: XCTestCase {
         XCTAssertEqual(values.1, 30)
         XCTAssertEqual(values.2, 30)
         XCTAssertEqual(performedValues, [1, 3])
+        let events = diagnostics.snapshot().events
+        XCTAssertEqual(events.map(\.kind), [.started, .queued, .combined, .superseded, .started])
+        XCTAssertEqual(events.first { $0.kind == .queued }?.relatedRequestID, 1)
+        XCTAssertEqual(events.first { $0.kind == .combined }?.relatedRequestID, 2)
+        XCTAssertEqual(events.last?.count, 3)
     }
 
     /// The in-flight request's result is discarded once superseded, so its work has to be

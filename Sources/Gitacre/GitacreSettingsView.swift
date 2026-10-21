@@ -343,6 +343,9 @@ private struct AdvancedSettings: View {
                 SettingsRow(title: "Diagnostics", detail: "Copies configuration without credentials") {
                     Button("Copy report") { model.copyDiagnostics(updateSummary: updates.diagnosticSummary) }.buttonStyle(QuietButtonStyle())
                 }
+                SettingsRow(title: "Performance", detail: "Export recent activity and session totals") {
+                    Button("Export performance…") { model.exportPerformanceDiagnostics() }.buttonStyle(QuietButtonStyle())
+                }
                 SettingsRow(title: "Refresh all data") {
                     Button("Refresh") { Task { await model.refreshAll() } }.buttonStyle(QuietButtonStyle())
                 }

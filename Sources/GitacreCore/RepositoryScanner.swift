@@ -48,6 +48,7 @@ public struct RepositoryScanner: Sendable {
             }
         }
 
+        PerformanceDiagnostics.shared.record(DiagnosticEvent(.selected, discovery: true, count: representatives.count))
         let readable = Self.concurrentMap(representatives) { representative in
             makeRepository(commonDirectory: representative.commonDirectory, checkout: representative.checkout)
         }
@@ -96,6 +97,7 @@ public struct RepositoryScanner: Sendable {
             selected = repositories.enumerated().map { ($0.offset, $0.element) }
         }
 
+        PerformanceDiagnostics.shared.record(DiagnosticEvent(.selected, count: selected.count, worktrees: selected.reduce(0) { $0 + $1.1.worktrees.count }))
         let refreshed = Self.concurrentMap(selected) { pair in
             (pair.0, refresh(pair.1))
         }
@@ -220,14 +222,27 @@ public struct RepositoryScanner: Sendable {
         return .found(URL(fileURLWithPath: output).standardizedFileURL.path)
     }
 
-    private func makeRepository(
+    private func makeRepository(commonDirectory: String, checkout: String, existingIconPath: String? = nil, discoversIcon: Bool = true) -> Repository? {
+        var context = DiagnosticContext.current
+        context?.repository = commonDirectory.hashValue
+        return DiagnosticContext.$current.withValue(context) {
+            buildRepository(commonDirectory: commonDirectory, checkout: checkout, existingIconPath: existingIconPath, discoversIcon: discoversIcon)
+        }
+    }
+
+    private func buildRepository(
         commonDirectory: String,
         checkout: String,
         existingIconPath: String? = nil,
         discoversIcon: Bool = true
     ) -> Repository? {
         let started = Date()
-        defer { ProcessDiagnostics.shared.recordRepository(duration: Date().timeIntervalSince(started)) }
+        let uptime = ProcessInfo.processInfo.systemUptime
+        defer {
+            ProcessDiagnostics.shared.recordRepository(duration: Date().timeIntervalSince(started))
+            PerformanceDiagnostics.shared.record(DiagnosticEvent(.repositoryCompleted,
+                duration: ProcessInfo.processInfo.systemUptime - uptime))
+        }
         let worktreeResult = git(checkout, ["worktree", "list", "--porcelain", "-z"])
         guard worktreeResult.succeeded else {
             return Self.unreadableRepository(
@@ -609,6 +624,8 @@ public struct RepositoryScanner: Sendable {
         guard inputs.count > 1 else { return inputs.map(transform) }
 
         let slots = OrderedSlots<Output>(count: inputs.count)
+        let commandCounter = DiagnosticCommandCounter.current
+        let diagnosticContext = DiagnosticContext.current
         let queue = DispatchQueue(label: "com.shivamx96.gitacre.scan", attributes: .concurrent)
         let group = DispatchGroup()
         let gate = DispatchSemaphore(value: concurrencyWidth)
@@ -616,7 +633,11 @@ public struct RepositoryScanner: Sendable {
         for (index, input) in inputs.enumerated() {
             gate.wait()
             queue.async(group: group) {
-                slots.set(transform(input), at: index)
+                DiagnosticContext.$current.withValue(diagnosticContext) {
+                    DiagnosticCommandCounter.$current.withValue(commandCounter) {
+                        slots.set(transform(input), at: index)
+                    }
+                }
                 gate.signal()
             }
         }
