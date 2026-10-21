@@ -84,6 +84,33 @@ swift test
 
 gitacre is currently prerelease software.
 
+### Background refresh
+
+Startup, explicit Refresh controls, settings changes, and the 15-minute discovery
+backstop walk monitored roots. Filesystem paths outside known repositories schedule
+one trailing discovery: no sooner than 60 seconds after the previous discovery,
+with a one-second settling window when already overdue. More events do not push
+that deadline back. New clones therefore appear within about a minute plus scan
+time. Edits in known worktrees refresh their repository immediately, even when the
+same batch also schedules discovery. Dropped-event/root-change flags immediately
+refresh known repositories and schedule discovery to repair the list.
+
+The watcher ignores Git metadata churn except `HEAD`, `index`, `ORIG_HEAD`,
+`MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, `BISECT_LOG`, `packed-refs`,
+`logs/refs/stash`, and the `rebase-merge/`, `rebase-apply/`, `refs/`, and `worktrees/`
+subtrees. Git `*.lock` paths are ignored; ordinary worktree files remain visible.
+Creation/removal of the `.git` entry itself remains an invalidation. The 60-second
+status timer runs only when the FSEvents stream is inactive, and retries starting
+it. Wake and manual refresh still run regardless of freshness.
+
+Opening the panel skips local refresh when a non-stale publication is under 30
+seconds old, and skips GitHub when a successful fetch is under 120 seconds old.
+GitHub polling remains every five minutes. Missing origins and unborn HEADs are
+remembered in memory until discovery; missing origins are rechecked then. An
+unborn-HEAD memo only skips `log` while status still reports an unborn branch, so
+a first commit or a linked worktree with commits is visible immediately. No new
+persistent cache or periodic diagnostic writes are introduced.
+
 ### Performance diagnostics
 
 Settings → Advanced → **Export performance…** saves a versioned JSON snapshot.
@@ -125,8 +152,11 @@ Reading an export:
 - Filesystem `count` means unique paths in a delivered batch, not raw OS events.
   `insideGitDirectory` counts paths inside a `.git` directory (index, refs, logs
   written by Git or an IDE); `unmatched` counts paths outside known repositories;
-  `rescan` indicates OS flags requiring discovery. This instrumentation does not
-  change filtering or refresh policy.
+  `rescan` indicates OS flags requiring recovery. `ignored` counts filtered paths;
+  `refreshed` indicates a batch selecting immediate status work. `discovery` means
+  discovery was scheduled, not that a scan ran for every batch. Session aggregates
+  add `totalIgnored`, `fullyIgnoredBatches`, `refreshedBatches`, and `discoveries`;
+  use `completed.*.none.discoveries` to count actual discovery scans.
 - Queue/start `count` is waiting callers, not concurrent scans. There is at most
   one active scan and one pending combined scan. `superseded` means a worker result
   was discarded; its `relatedRequestID` usually equals its own `requestID` because

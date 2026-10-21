@@ -1,6 +1,7 @@
 import Foundation
 
 public struct RepositoryScanner: Sendable {
+    private let failureMemo: RepositoryFailureMemo
     private let runner: any ProcessRunning
     private let gitExecutable: String
     private let maximumDepth: Int
@@ -12,8 +13,10 @@ public struct RepositoryScanner: Sendable {
         gitExecutable: String = "/usr/bin/git",
         maximumDepth: Int = 5,
         includeLinkedWorktrees: Bool = true,
-        ignoredDirectoryNames: Set<String> = []
+        ignoredDirectoryNames: Set<String> = [],
+        failureMemo: RepositoryFailureMemo = RepositoryFailureMemo()
     ) {
+        self.failureMemo = failureMemo
         self.runner = runner
         self.gitExecutable = gitExecutable
         self.maximumDepth = maximumDepth
@@ -22,6 +25,7 @@ public struct RepositoryScanner: Sendable {
     }
 
     public func scan(roots: [String]) -> [Repository] {
+        failureMemo.reset()
         let discoveryStarted = ProcessInfo.processInfo.systemUptime
         let checkouts = discoverCheckouts(roots: roots)
 
@@ -64,13 +68,14 @@ public struct RepositoryScanner: Sendable {
 
     /// Runs a refresh request: full discovery of monitored roots, or status-only
     /// refresh of already-known repositories.
-    public static func run(_ request: RepositoryRefreshRequest) -> [Repository] {
+    public static func run(_ request: RepositoryRefreshRequest, failureMemo: RepositoryFailureMemo = RepositoryFailureMemo()) -> [Repository] {
         let started = Date()
         defer { ProcessDiagnostics.shared.recordScan(duration: Date().timeIntervalSince(started), discovery: request.scope.isDiscovery) }
         let scanner = RepositoryScanner(
             maximumDepth: request.configuration.maximumDepth,
             includeLinkedWorktrees: request.configuration.includeLinkedWorktrees,
-            ignoredDirectoryNames: request.configuration.ignoredDirectoryNames
+            ignoredDirectoryNames: request.configuration.ignoredDirectoryNames,
+            failureMemo: failureMemo
         )
         switch request.scope {
         case .discovery:
@@ -272,7 +277,7 @@ public struct RepositoryScanner: Sendable {
         var failures: [String] = []
         var stashCount = 0
         for (index, record) in records.enumerated() {
-            switch makeWorktree(record: record, isPrimary: index == 0) {
+            switch makeWorktree(record: record, isPrimary: index == 0, commonDirectory: commonDirectory) {
             case let .worktree(worktree, stashes):
                 worktrees.append(worktree)
                 stashCount = max(stashCount, stashes)
@@ -293,10 +298,15 @@ public struct RepositoryScanner: Sendable {
             )
         }
 
-        let originResult = git(checkout, ["config", "--get", "remote.origin.url"])
-        let origin = originResult.succeeded
-            ? originResult.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-            : ""
+        var origin = ""
+        if !failureMemo.originIsAbsent(commonDirectory) {
+            let originResult = git(checkout, ["config", "--get", "remote.origin.url"])
+            if originResult.succeeded {
+                origin = originResult.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+            } else if originResult.terminationStatus == 1 && originResult.standardError.isEmpty {
+                failureMemo.rememberMissingOrigin(commonDirectory)
+            }
+        }
         let remoteURL = Self.webURL(forOrigin: origin)
         let name = Self.repositoryName(origin: origin, fallbackPath: worktrees[0].path)
 
@@ -324,7 +334,7 @@ public struct RepositoryScanner: Sendable {
         case unreadable(String)
     }
 
-    private func makeWorktree(record: WorktreeRecord, isPrimary: Bool) -> WorktreeOutcome {
+    private func makeWorktree(record: WorktreeRecord, isPrimary: Bool, commonDirectory: String) -> WorktreeOutcome {
         guard FileManager.default.fileExists(atPath: record.path) else { return .pruned }
 
         let statusResult = git(
@@ -346,10 +356,15 @@ public struct RepositoryScanner: Sendable {
             : ""
         let operation = Self.operation(inGitDirectory: gitDirectory)
 
-        let dateResult = git(record.path, ["log", "-1", "--format=%ct"])
-        let timestamp = TimeInterval(
-            dateResult.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
+        let unborn = statusResult.standardOutput.split(whereSeparator: \.isNewline).contains("# branch.oid (initial)")
+        var timestamp: TimeInterval?
+        if !failureMemo.skipsLog(commonDirectory, checkout: record.path, unborn: unborn) {
+            let dateResult = git(record.path, ["log", "-1", "--format=%ct"])
+            timestamp = TimeInterval(dateResult.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines))
+            if unborn && dateResult.terminationStatus == 128 {
+                failureMemo.rememberUnbornHead(commonDirectory, checkout: record.path)
+            }
+        }
 
         let branch = status.branch == "(detached)" || status.branch.isEmpty
             ? String(record.head.prefix(8))

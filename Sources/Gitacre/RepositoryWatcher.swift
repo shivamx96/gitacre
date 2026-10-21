@@ -3,6 +3,7 @@ import CoreServices
 
 /// FSEvents are invalidations, never a substitute for reading Git state.
 final class RepositoryWatcher {
+    private(set) var isActive = false
     private var stream: FSEventStreamRef?
     private let onChange: (Set<String>, Bool) -> Void
 
@@ -21,7 +22,7 @@ final class RepositoryWatcher {
         FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagWatchRoot))
         if let stream {
             FSEventStreamSetDispatchQueue(stream, .main)
-            FSEventStreamStart(stream)
+            isActive = FSEventStreamStart(stream)
         }
     }
 

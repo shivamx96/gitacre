@@ -68,13 +68,16 @@ public struct DiagnosticEvent: Codable, Sendable {
     public var exitStatus: Int32?
     public var changed: Bool?
     public var rescan: Bool?
+    public var ignored: Int?
+    public var refreshed: Bool?
     public var unmatched: Int?
 
     public init(_ kind: DiagnosticKind, context: DiagnosticContext? = DiagnosticContext.current,
                 command: DiagnosticCommand? = nil, worktree: Int? = nil, duration: TimeInterval? = nil,
                 discovery: Bool? = nil, count: Int? = nil, worktrees: Int? = nil,
                 failed: Bool? = nil, timedOut: Bool? = nil, exitStatus: Int32? = nil,
-                changed: Bool? = nil, commandCount: Int? = nil, relatedRequestID: UInt64? = nil, automaticRefresh: Bool? = nil, githubPolling: Bool? = nil, insideGitDirectory: Int? = nil, rescan: Bool? = nil, unmatched: Int? = nil) {
+                changed: Bool? = nil, commandCount: Int? = nil, relatedRequestID: UInt64? = nil, automaticRefresh: Bool? = nil, githubPolling: Bool? = nil, insideGitDirectory: Int? = nil, rescan: Bool? = nil, unmatched: Int? = nil, ignored: Int? = nil, refreshed: Bool? = nil) {
+        self.ignored = ignored; self.refreshed = refreshed
         self.commandCount = commandCount
         self.relatedRequestID = relatedRequestID; self.automaticRefresh = automaticRefresh
         self.githubPolling = githubPolling; self.insideGitDirectory = insideGitDirectory
@@ -93,6 +96,10 @@ public struct DiagnosticAggregate: Codable, Sendable {
     public var unchanged = 0
     public var totalCommands = 0
     public var totalInsideGitDirectory = 0
+    public var discoveries = 0
+    public var fullyIgnoredBatches = 0
+    public var totalIgnored = 0
+    public var refreshedBatches = 0
     public var totalUnmatched = 0
     public var totalCount = 0
     public var peakCount = 0
@@ -108,6 +115,10 @@ public struct DiagnosticAggregate: Codable, Sendable {
         if event.changed == false { unchanged += 1 }
         totalCommands += event.commandCount ?? 0
         totalInsideGitDirectory += event.insideGitDirectory ?? 0
+        if event.discovery == true { discoveries += 1 }
+        if event.kind == .filesystem, let count = event.count, count > 0, event.ignored == count, event.rescan != true { fullyIgnoredBatches += 1 }
+        totalIgnored += event.ignored ?? 0
+        if event.refreshed == true { refreshedBatches += 1 }
         totalUnmatched += event.unmatched ?? 0
         totalCount += event.count ?? 0
         peakCount = max(peakCount, event.count ?? 0)
