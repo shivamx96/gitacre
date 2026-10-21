@@ -24,6 +24,8 @@ final class AppModel: ObservableObject {
     private var discoveryDebounce = DiscoveryDebounce()
     private var pendingDiscovery: Task<Void, Never>?
     private var lastGitHubSuccess: Date?
+    private var initialFilesystemPaths = Set<String>()
+    private var initialFilesystemRescan = false
     private var watchedPaths: [String] = []
     private var wakeObserver: AnyCancellable?
     private var sleepObserver: AnyCancellable?
@@ -289,6 +291,17 @@ final class AppModel: ObservableObject {
         isRepositorySnapshotStale = false
         lastRefreshDuration = Date().timeIntervalSince(started)
         configureWatcher()
+        // Events received while discovery had no baseline must not wait for the
+        // discovery cooldown if they affect a repository we have just found.
+        if !initialFilesystemPaths.isEmpty || initialFilesystemRescan {
+            let batch = BackgroundRefreshPolicy.batch(paths: initialFilesystemPaths,
+                rescan: initialFilesystemRescan, repositories: repositories)
+            initialFilesystemPaths.removeAll()
+            initialFilesystemRescan = false
+            if let scope = batch.statusScope {
+                Task { await self.refreshRepositories(scope: scope, trigger: .filesystem) }
+            }
+        }
         let cacheURL = Self.localCacheURL
         let snapshot = LocalSnapshot(configuration: scanConfiguration, repositories: repositories, fetchedAt: lastRepositoryRefresh!)
         let previousWriter = snapshotWriter
@@ -645,7 +658,10 @@ final class AppModel: ObservableObject {
                     rescan: rescan, unmatched: batch.unmatched, ignored: batch.ignored,
                     refreshed: batch.statusScope != nil))
                 if batch.needsDiscovery { self.scheduleFilesystemDiscovery() }
-                if let scope = batch.statusScope, self.hasLoadedRepositories {
+                if !self.hasLoadedRepositories {
+                    self.initialFilesystemPaths.formUnion(batch.paths)
+                    self.initialFilesystemRescan = self.initialFilesystemRescan || rescan
+                } else if let scope = batch.statusScope {
                     await self.refreshRepositories(scope: scope, trigger: .filesystem, diagnostics: context)
                 }
             }

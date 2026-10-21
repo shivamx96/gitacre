@@ -57,6 +57,16 @@ final class BackgroundRefreshPolicyTests: XCTestCase {
         XCTAssertEqual(mixed.ignored, 1)
     }
 
+    func testStartupInvalidationsAreRetargetedAfterDiscoveryPublishes() {
+        let paths: Set<String> = ["/root/repo/.git/HEAD", "/root/other/file", "/root/repo/.git/index.lock"]
+        let initial = BackgroundRefreshPolicy.batch(paths: paths, rescan: false, repositories: [])
+        XCTAssertNil(initial.statusScope)
+        XCTAssertTrue(initial.needsDiscovery)
+        let afterDiscovery = BackgroundRefreshPolicy.batch(paths: initial.paths, rescan: false, repositories: [repository])
+        XCTAssertEqual(afterDiscovery.statusScope, .status(paths: ["/root/repo/.git/HEAD"]))
+        XCTAssertTrue(afterDiscovery.needsDiscovery, "unmatched paths still retain the bounded discovery backstop")
+    }
+
     func testDiscoveryHasBoundedTrailingDeadlineWithoutStarvation() {
         var debounce = DiscoveryDebounce()
         debounce.didStartDiscovery(at: 0) // startup bypasses delay
