@@ -13,6 +13,7 @@ final class AppModel: ObservableObject {
     private static let legacyDefaultsMigrationKey = "didMigrateDefaultsFromDevBundleIdentifier"
 
     @Published private(set) var repositories: [Repository] = []
+    @Published private(set) var discoveryIssues: [RepositoryDiscoveryIssue] = []
     @Published private(set) var githubSnapshot = GitHubSnapshot(authentication: .cliMissing)
     @Published private(set) var isLoadingRepositories = false
     @Published private(set) var isLoadingGitHub = false
@@ -153,6 +154,7 @@ final class AppModel: ObservableObject {
 
         if let cached = LocalSnapshot.read(at: Self.localCacheURL, configuration: scanConfiguration) {
             repositories = cached.repositories
+            discoveryIssues = cached.discoveryIssues ?? []
             hasLoadedRepositories = true
             lastRepositoryRefresh = cached.fetchedAt
         }
@@ -180,7 +182,7 @@ final class AppModel: ObservableObject {
         let remote = remoteAttentionRepositoryIDs
         return repositories.filter { $0.needsAttention || remote.contains($0.id) }
     }
-    var pendingCount: Int { pendingRepositories.count }
+    var pendingCount: Int { pendingRepositories.count + discoveryIssues.count }
     var reviewCount: Int { visiblePullRequests.filter { $0.kind == .reviewRequested }.count }
     var attentionCount: Int {
         pendingCount + visiblePullRequests.filter { request in
@@ -286,6 +288,7 @@ final class AppModel: ObservableObject {
             RepositoryIconCache.shared.invalidate()
         }
         repositories = outcome.repositories
+        discoveryIssues = outcome.discoveryIssues
         lastRepositoryRefresh = Date()
         hasLoadedRepositories = true
         isRepositorySnapshotStale = false
@@ -303,7 +306,7 @@ final class AppModel: ObservableObject {
             }
         }
         let cacheURL = Self.localCacheURL
-        let snapshot = LocalSnapshot(configuration: scanConfiguration, repositories: repositories, fetchedAt: lastRepositoryRefresh!)
+        let snapshot = LocalSnapshot(configuration: scanConfiguration, repositories: repositories, fetchedAt: lastRepositoryRefresh!, discoveryIssues: discoveryIssues)
         let previousWriter = snapshotWriter
         snapshotWriter = Task.detached(priority: .utility) {
             await previousWriter?.value
@@ -563,6 +566,7 @@ final class AppModel: ObservableObject {
             "Roots: \(roots.count)",
             "Local snapshot stale: \(isRepositorySnapshotStale)",
             "Last refresh duration: \(String(format: "%.2fs", lastRefreshDuration))",
+            "Discovery issues: \(discoveryIssues.count)",
             "Repositories with scan failures: \(repositories.filter { $0.scanFailure != nil }.count)",
             "Shortcut registered: \(isGlobalShortcutRegistered)",
             "GitHub cached/error: \(githubSnapshot.errorMessage != nil)",
