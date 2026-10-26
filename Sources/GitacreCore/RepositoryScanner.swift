@@ -25,9 +25,14 @@ public struct RepositoryScanner: Sendable {
     }
 
     public func scan(roots: [String]) -> [Repository] {
+        scanWithIssues(roots: roots).repositories
+    }
+
+    public func scanWithIssues(roots: [String]) -> RepositoryScanResult {
         failureMemo.reset()
         let discoveryStarted = ProcessInfo.processInfo.systemUptime
-        let checkouts = discoverCheckouts(roots: roots)
+        let discovery = discoverCheckouts(roots: roots)
+        let checkouts = discovery.checkouts
 
         // Each checkout costs a `git rev-parse`, and each repository six more git calls.
         // Run independent checkouts and repositories side by side: the work is spent
@@ -63,12 +68,16 @@ public struct RepositoryScanner: Sendable {
         }
         .compactMap { $0 }
 
-        return Self.sorted(readable + unreadable)
+        return RepositoryScanResult(repositories: Self.sorted(readable + unreadable), discoveryIssues: discovery.issues)
     }
 
     /// Runs a refresh request: full discovery of monitored roots, or status-only
     /// refresh of already-known repositories.
     public static func run(_ request: RepositoryRefreshRequest, failureMemo: RepositoryFailureMemo = RepositoryFailureMemo()) -> [Repository] {
+        runWithIssues(request, failureMemo: failureMemo).repositories
+    }
+
+    public static func runWithIssues(_ request: RepositoryRefreshRequest, failureMemo: RepositoryFailureMemo = RepositoryFailureMemo()) -> RepositoryScanResult {
         let started = Date()
         defer { ProcessDiagnostics.shared.recordScan(duration: Date().timeIntervalSince(started), discovery: request.scope.isDiscovery) }
         let scanner = RepositoryScanner(
@@ -79,9 +88,9 @@ public struct RepositoryScanner: Sendable {
         )
         switch request.scope {
         case .discovery:
-            return scanner.scan(roots: request.configuration.roots)
+            return scanner.scanWithIssues(roots: request.configuration.roots)
         case let .status(paths):
-            return scanner.refreshStatus(of: request.knownRepositories, matching: paths)
+            return RepositoryScanResult(repositories: scanner.refreshStatus(of: request.knownRepositories, matching: paths))
         }
     }
 
@@ -162,7 +171,7 @@ public struct RepositoryScanner: Sendable {
         }
     }
 
-    private func discoverCheckouts(roots: [String]) -> [String] {
+    private func discoverCheckouts(roots: [String]) -> (checkouts: [String], issues: [RepositoryDiscoveryIssue]) {
         let fileManager = FileManager.default
         let defaultIgnoredDirectoryNames: Set<String> = [
             ".build", ".cache", ".git", ".idea", ".swiftpm", "DerivedData",
@@ -170,12 +179,16 @@ public struct RepositoryScanner: Sendable {
         ]
         let ignoredDirectoryNames = defaultIgnoredDirectoryNames.union(self.ignoredDirectoryNames)
         var found: Set<String> = []
+        var issues: [String: RepositoryDiscoveryIssue] = [:]
 
         for rootPath in roots {
             let rootURL = URL(fileURLWithPath: rootPath).standardizedFileURL
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(atPath: rootURL.path, isDirectory: &isDirectory),
-                  isDirectory.boolValue else { continue }
+                  isDirectory.boolValue else {
+                issues[rootURL.path] = RepositoryDiscoveryIssue(path: rootURL.path, message: "Monitored folder is missing, inaccessible, or is no longer a directory.")
+                continue
+            }
 
             if isCheckout(rootURL.path) {
                 found.insert(rootURL.path)
@@ -185,13 +198,26 @@ public struct RepositoryScanner: Sendable {
             guard let enumerator = fileManager.enumerator(
                 at: rootURL,
                 includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey],
-                options: [.skipsHiddenFiles, .skipsPackageDescendants]
-            ) else { continue }
+                options: [.skipsHiddenFiles, .skipsPackageDescendants],
+                errorHandler: { url, error in
+                    issues[url.path] = RepositoryDiscoveryIssue(path: url.path, message: error.localizedDescription)
+                    return true // Keep scanning accessible siblings.
+                }
+            ) else {
+                issues[rootURL.path] = RepositoryDiscoveryIssue(path: rootURL.path, message: "Could not enumerate this monitored folder.")
+                continue
+            }
 
             let rootDepth = rootURL.pathComponents.count
             while let item = enumerator.nextObject() as? URL {
-                guard let values = try? item.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey]),
-                      values.isDirectory == true else { continue }
+                let values: URLResourceValues
+                do {
+                    values = try item.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
+                } catch {
+                    issues[item.path] = RepositoryDiscoveryIssue(path: item.path, message: error.localizedDescription)
+                    continue
+                }
+                guard values.isDirectory == true else { continue }
 
                 let depth = item.pathComponents.count - rootDepth
                 if depth > maximumDepth || ignoredDirectoryNames.contains(item.lastPathComponent) {
@@ -206,7 +232,7 @@ public struct RepositoryScanner: Sendable {
             }
         }
 
-        return found.sorted()
+        return (found.sorted(), issues.values.sorted { $0.path < $1.path })
     }
 
     private func isCheckout(_ path: String) -> Bool {

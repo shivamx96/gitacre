@@ -33,7 +33,7 @@ struct RepositoryListView: View {
                         .padding(.bottom, 28)
                 }
                 .onDrop(of: [UTType.fileURL], isTargeted: nil, perform: acceptDroppedFolders)
-            } else if showsPendingOnly && model.pendingRepositories.isEmpty {
+            } else if showsPendingOnly && model.pendingRepositories.isEmpty && model.discoveryIssues.isEmpty {
                 EmptyStateView(
                     symbol: "checkmark",
                     title: "Everything is committed",
@@ -41,7 +41,7 @@ struct RepositoryListView: View {
                     actionTitle: "View all repositories",
                     action: emptyAction
                 )
-            } else if model.repositories.isEmpty {
+            } else if model.repositories.isEmpty && model.discoveryIssues.isEmpty {
                 EmptyStateView(
                     symbol: "folder",
                     title: "No repositories found",
@@ -52,6 +52,15 @@ struct RepositoryListView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
+                        ForEach(model.discoveryIssues) { issue in
+                            InlineErrorBanner(
+                                title: "Repository scan incomplete",
+                                message: "\(issue.path)\n\(issue.message)",
+                                primaryTitle: "Retry",
+                                primaryAction: { Task { await model.refreshRepositories() } }
+                            )
+                            .padding(.vertical, 5)
+                        }
                         ForEach(sections) { section in
                             RepositorySectionView(
                                 section: section,

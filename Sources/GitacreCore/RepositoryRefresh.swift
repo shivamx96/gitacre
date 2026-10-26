@@ -89,11 +89,36 @@ public struct RepositoryRefreshRequest: Equatable, Sendable {
     public func covers(_ next: Self) -> Bool { false }
 }
 
+/// A filesystem discovery failure is separate from a repository Git-status failure:
+/// the inaccessible folder may contain repositories we have never discovered.
+public struct RepositoryDiscoveryIssue: Identifiable, Equatable, Codable, Sendable {
+    public var id: String { path }
+    public let path: String
+    public let message: String
+
+    public init(path: String, message: String) {
+        self.path = path
+        self.message = message
+    }
+}
+
+public struct RepositoryScanResult: Sendable {
+    public let repositories: [Repository]
+    public let discoveryIssues: [RepositoryDiscoveryIssue]
+
+    public init(repositories: [Repository], discoveryIssues: [RepositoryDiscoveryIssue] = []) {
+        self.repositories = repositories
+        self.discoveryIssues = discoveryIssues
+    }
+}
+
 public struct RepositoryRefreshOutcome: Equatable, Sendable {
     public var diagnostics: DiagnosticContext?
     public var repositories: [Repository]
+    public var discoveryIssues: [RepositoryDiscoveryIssue]
     public var scope: RepositoryRefreshScope
-    public init(repositories: [Repository], scope: RepositoryRefreshScope, diagnostics: DiagnosticContext? = nil) {
+    public init(repositories: [Repository], scope: RepositoryRefreshScope, diagnostics: DiagnosticContext? = nil, discoveryIssues: [RepositoryDiscoveryIssue] = []) {
+        self.discoveryIssues = discoveryIssues
         self.diagnostics = diagnostics
         self.repositories = repositories
         self.scope = scope
@@ -104,8 +129,11 @@ public struct LocalSnapshot: Codable, Sendable {
     public let configuration: ScanConfiguration
     public let repositories: [Repository]
     public let fetchedAt: Date
+    // Optional for snapshots written before discovery issues were persisted.
+    public let discoveryIssues: [RepositoryDiscoveryIssue]?
 
-    public init(configuration: ScanConfiguration, repositories: [Repository], fetchedAt: Date) {
+    public init(configuration: ScanConfiguration, repositories: [Repository], fetchedAt: Date, discoveryIssues: [RepositoryDiscoveryIssue] = []) {
+        self.discoveryIssues = discoveryIssues
         self.configuration = configuration
         self.repositories = repositories
         self.fetchedAt = fetchedAt
@@ -131,6 +159,7 @@ public actor RepositoryRefreshWorker {
     private let failureMemo = RepositoryFailureMemo()
     private var configuration: ScanConfiguration?
     private var repositories: [Repository] = []
+    private var discoveryIssues: [RepositoryDiscoveryIssue] = []
     public init() {}
     public func run(_ request: RepositoryRefreshRequest) async -> RepositoryRefreshOutcome {
         var effective = request
@@ -145,15 +174,16 @@ public actor RepositoryRefreshWorker {
         let counter = DiagnosticCommandCounter()
         let result = await Task.detached(priority: .utility) {
             DiagnosticContext.$current.withValue(input.diagnostics) {
-                DiagnosticCommandCounter.$current.withValue(counter) { RepositoryScanner.run(input, failureMemo: failureMemo) }
+                DiagnosticCommandCounter.$current.withValue(counter) { RepositoryScanner.runWithIssues(input, failureMemo: failureMemo) }
             }
         }.value
+        if effective.scope.isDiscovery { discoveryIssues = result.discoveryIssues }
         PerformanceDiagnostics.shared.record(DiagnosticEvent(.completed, context: input.diagnostics,
             duration: ProcessInfo.processInfo.systemUptime - started, discovery: input.scope.isDiscovery,
-            count: result.count, worktrees: result.reduce(0) { $0 + $1.worktrees.count },
-            failed: result.contains { $0.scanFailure != nil }, commandCount: counter.count))
+            count: result.repositories.count, worktrees: result.repositories.reduce(0) { $0 + $1.worktrees.count },
+            failed: !discoveryIssues.isEmpty || result.repositories.contains { $0.scanFailure != nil }, commandCount: counter.count))
         configuration = request.configuration
-        repositories = result
-        return RepositoryRefreshOutcome(repositories: result, scope: effective.scope, diagnostics: effective.diagnostics)
+        repositories = result.repositories
+        return RepositoryRefreshOutcome(repositories: result.repositories, scope: effective.scope, diagnostics: effective.diagnostics, discoveryIssues: discoveryIssues)
     }
 }
