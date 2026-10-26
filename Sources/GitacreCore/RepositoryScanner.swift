@@ -264,20 +264,18 @@ public struct RepositoryScanner: Sendable {
         }
 
         let discoveredRecords = Self.parseWorktreeList(worktreeResult.standardOutput)
-        let records: [WorktreeRecord]
-        if includeLinkedWorktrees {
-            records = discoveredRecords
-        } else {
-            records = discoveredRecords.filter {
-                URL(fileURLWithPath: $0.path).standardizedFileURL.path
-                    == URL(fileURLWithPath: checkout).standardizedFileURL.path
-            }
-        }
+        // Git lists the main worktree first, regardless of which checkout was used
+        // to run the command. Discovery order must not decide which checkout survives
+        // when linked worktrees are disabled. A bare repository has no main worktree.
+        let primaryRecord = discoveredRecords.first.flatMap { $0.isBare ? nil : $0 }
+        let records = includeLinkedWorktrees
+            ? discoveredRecords.filter { !$0.isBare }
+            : primaryRecord.map { [$0] } ?? []
         var worktrees: [Worktree] = []
         var failures: [String] = []
         var stashCount = 0
-        for (index, record) in records.enumerated() {
-            switch makeWorktree(record: record, isPrimary: index == 0, commonDirectory: commonDirectory) {
+        for record in records {
+            switch makeWorktree(record: record, isPrimary: record.path == primaryRecord?.path, commonDirectory: commonDirectory) {
             case let .worktree(worktree, stashes):
                 worktrees.append(worktree)
                 stashCount = max(stashCount, stashes)
@@ -456,6 +454,8 @@ public struct RepositoryScanner: Sendable {
                 current?.head = String(line.dropFirst(5))
             } else if line.hasPrefix("branch ") {
                 current?.branchReference = String(line.dropFirst(7))
+            } else if line == "bare" {
+                current?.isBare = true
             } else if line == "detached" {
                 current?.isDetached = true
             } else if line.hasPrefix("locked") {
@@ -672,6 +672,7 @@ public struct WorktreeRecord: Equatable, Sendable {
     public var path: String
     public var head: String = ""
     public var branchReference: String?
+    public var isBare = false
     public var isDetached = false
     public var isLocked = false
 

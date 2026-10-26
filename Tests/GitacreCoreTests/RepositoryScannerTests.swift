@@ -45,6 +45,43 @@ final class RepositoryScannerTests: XCTestCase {
         XCTAssertEqual(primaryOnly[0].worktrees.count, 1)
     }
 
+    func testDisablingLinkedWorktreesKeepsDirtyPrimaryRegardlessOfDiscoveryOrder() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let primary = root.appendingPathComponent("z-primary")
+        let linked = root.appendingPathComponent("a-linked")
+        try FileManager.default.createDirectory(at: primary, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runner = ProcessRunner()
+        for arguments in [
+            ["init", "-q"],
+            ["-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "--allow-empty", "-qm", "Initial"],
+            ["worktree", "add", "-q", "-b", "feature", linked.path]
+        ] {
+            let result = runner.run(executable: "/usr/bin/git", arguments: ["-C", primary.path] + arguments)
+            XCTAssertTrue(result.succeeded, result.standardError)
+        }
+        try Data("pending".utf8).write(to: primary.appendingPathComponent("dirty.txt"))
+        let scanner = RepositoryScanner(includeLinkedWorktrees: false)
+        // Cover a root containing both checkouts and monitoring only the linked checkout.
+        for roots in [[root.path], [linked.path]] {
+            let repositories = scanner.scan(roots: roots)
+            let repository = try XCTUnwrap(repositories.first)
+            XCTAssertEqual(repository.worktrees.count, 1)
+            XCTAssertEqual(repository.worktrees.first.map { URL(fileURLWithPath: $0.path).resolvingSymlinksInPath().path }, primary.resolvingSymlinksInPath().path)
+            XCTAssertEqual(repository.worktrees.first?.isPrimary, true)
+            XCTAssertTrue(repository.needsAttention)
+            let refreshed = scanner.refreshStatus(of: repositories)
+            XCTAssertEqual(refreshed.first?.worktrees.first.map { URL(fileURLWithPath: $0.path).resolvingSymlinksInPath().path }, primary.resolvingSymlinksInPath().path)
+            XCTAssertTrue(refreshed.first?.needsAttention == true)
+        }
+    }
+
+    func testBareRecordIsNotTreatedAsAPrimaryWorktree() {
+        let records = RepositoryScanner.parseWorktreeList("worktree /tmp/bare.git\0bare\0\0worktree /tmp/linked\0HEAD abc123\0\0")
+        XCTAssertTrue(records[0].isBare)
+        XCTAssertFalse(records[1].isBare)
+    }
+
     func testUnreadableRepositoryIsSurfacedRatherThanDropped() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
