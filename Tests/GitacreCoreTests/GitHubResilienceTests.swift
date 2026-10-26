@@ -25,6 +25,26 @@ final class GitHubResilienceTests: XCTestCase {
         XCTAssertTrue(service.loadPullRequests(preferredPath: executable.path, cacheURL: cache, organizations: ["org"]).pullRequests.isEmpty)
     }
 
+    func testAuthOutagePreservesCacheWithoutExposingAnUnverifiedAccountsPRs() throws {
+        let cache = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: cache) }
+        let runner = ResilienceRunner()
+        let service = GitHubCLIService(runner: runner)
+        let initial = service.loadPullRequests(preferredPath: "/usr/bin/true", cacheURL: cache)
+        let bytes = try Data(contentsOf: cache)
+        runner.failAuth = true
+        let outage = service.loadPullRequests(preferredPath: "/usr/bin/true", cacheURL: cache)
+        guard case .unavailable = outage.authentication else { return XCTFail("Expected unavailable") }
+        XCTAssertTrue(outage.pullRequests.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: cache), bytes)
+
+        // Once identity is verified again, failed categories can reuse the same cache.
+        runner.failAuth = false
+        runner.failReviews = true
+        let recovered = service.loadPullRequests(preferredPath: "/usr/bin/true", cacheURL: cache)
+        XCTAssertEqual(recovered.pullRequests.map(\.id).sorted(), initial.pullRequests.map(\.id).sorted())
+    }
+
     func testMalformedSearchDoesNotBecomeSuccessfulEmptyResult() throws {
         let runner = ResilienceRunner()
         runner.malformed = true
@@ -35,6 +55,7 @@ final class GitHubResilienceTests: XCTestCase {
 }
 
 private final class ResilienceRunner: ProcessRunning, @unchecked Sendable {
+    var failAuth = false
     var failReviews = false
     var emptyAuthored = false
     var malformed = false
@@ -42,6 +63,7 @@ private final class ResilienceRunner: ProcessRunning, @unchecked Sendable {
     var searches: [[String]] = []
     func run(executable: String, arguments: [String]) -> ProcessResult {
         if arguments.first == "auth" {
+            if failAuth { return result("", status: -1) }
             return result("{\"hosts\":{\"github.com\":[{\"state\":\"success\",\"active\":true,\"login\":\"\(login)\"}]}}")
         }
         if arguments.first == "search" {

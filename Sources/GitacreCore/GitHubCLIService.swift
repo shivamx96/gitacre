@@ -35,15 +35,27 @@ public struct GitHubCLIService: Sendable {
             executable: executable,
             arguments: ["auth", "status", "--active", "--hostname", "github.com", "--json", "hosts"]
         )
+        // In JSON mode gh reports account issues in the payload; a nonzero exit can
+        // instead be a timeout, launch failure, or transport error. Do not send users
+        // through login again when the account could not be checked.
         guard result.succeeded else {
-            return .signedOut(executable: executable)
+            if result.terminationStatus == 1,
+               result.standardError.lowercased().contains("not logged into any github hosts") {
+                return .signedOut(executable: executable)
+            }
+            return .unavailable(executable: executable, message: "Could not verify your GitHub account. Check your connection and retry.")
         }
 
         guard let data = result.standardOutput.data(using: .utf8),
-              let envelope = try? JSONDecoder().decode(AuthEnvelope.self, from: data),
-              let account = envelope.hosts["github.com"]?.first(where: { $0.active && $0.state == "success" }),
-              !account.login.isEmpty else {
+              let envelope = try? JSONDecoder().decode(AuthEnvelope.self, from: data) else {
             return .unavailable(executable: executable, message: "Could not read the active GitHub account")
+        }
+        guard let accounts = envelope.hosts["github.com"], !accounts.isEmpty else {
+            return .signedOut(executable: executable)
+        }
+        guard let account = accounts.first(where: { $0.active && $0.state == "success" }),
+              !account.login.isEmpty else {
+            return .unavailable(executable: executable, message: "Could not verify the active GitHub account. Check gh auth status and retry.")
         }
 
         return .signedIn(executable: executable, login: account.login)
