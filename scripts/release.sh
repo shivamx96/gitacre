@@ -6,16 +6,7 @@ repository=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 release_label=${1:-}
 build_number=${2:-1}
 
-if [[ ! "$release_label" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z][0-9A-Za-z.-]*$ ]]; then
-    echo "Usage: scripts/release.sh <version-label> [build-number]" >&2
-    echo "Example: scripts/release.sh 1.0.0-beta 1" >&2
-    exit 2
-fi
-
-if [[ ! "$build_number" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
-    echo "Build number must contain one or more period-separated integers." >&2
-    exit 2
-fi
+bash "$repository/scripts/validate-release.sh" "$release_label" "$build_number"
 
 marketing_version=${release_label%%-*}
 notary_profile=${GITACRE_NOTARY_PROFILE:-gitacre-notary}
