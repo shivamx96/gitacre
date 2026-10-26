@@ -2,7 +2,7 @@
 
 gitacre is distributed outside the Mac App Store as a universal, Developer ID-signed, notarized disk image.
 
-The prerelease label belongs in the Git tag and artifact name. Apple bundle metadata remains numeric: `1.0.0-beta` is packaged with `CFBundleShortVersionString` set to `1.0.0` and an independently increasing `CFBundleVersion`. The full label is also written to `GitacreReleaseLabel`, so the app can tell `1.0.0-beta` from `1.0.0` even though the two share a short version string.
+Both stable labels (`1.0.0`) and prerelease labels (`1.0.0-beta.6`) are accepted. The full release label belongs in the Git tag and artifact name. Apple bundle metadata remains numeric: `1.0.0-beta` is packaged with `CFBundleShortVersionString` set to `1.0.0` and an independently increasing `CFBundleVersion`. The full label is also written to `GitacreReleaseLabel`, so the app can tell `1.0.0-beta` from `1.0.0` even though the two share a short version string.
 
 **`CFBundleVersion` must increase with every release.** It is the number Sparkle compares to decide whether an update exists; the marketing version plays no part. `scripts/release.sh` refuses to publish a build number that is not greater than the newest already in the appcast.
 
@@ -42,6 +42,8 @@ GITACRE_SIGNING_IDENTITY="Developer ID Application: Shivam Shekhar (RP9BF8YGPZ)"
 GITACRE_SPARKLE_PUBLIC_KEY="$(.build/artifacts/sparkle/Sparkle/bin/generate_keys -p)" \
   scripts/release.sh 1.0.0-beta.4 4
 ```
+
+For a stable release, use a label such as `1.0.0` with the next build number, and omit `--prerelease` when creating its GitHub release. Validate labels without building or accessing signing credentials with `bash scripts/validate-release.sh 1.0.0 7`.
 
 The script builds a universal `arm64` and `x86_64` app, embeds and signs `Sparkle.framework`, enables the hardened runtime, submits the app and disk image to Apple's notary service, staples both tickets, runs Gatekeeper and disk-image verification, and writes a SHA-256 checksum under `dist/`.
 
