@@ -59,8 +59,33 @@ final class ProcessRunnerTests: XCTestCase {
 
         XCTAssertFalse(result.succeeded)
         XCTAssertEqual(result.terminationStatus, -1)
-        XCTAssertTrue(result.standardError.contains("did not finish within 1s"))
+        XCTAssertTrue(result.standardError.contains("did not finish within 1.0s"))
         XCTAssertLessThan(Date().timeIntervalSince(started), 20)
+    }
+
+    func testInheritedPipesCannotOutliveTheDeadline() throws {
+        let started = Date()
+        let result = try runWithinTestTimeout {
+            ProcessRunner(timeout: 0.2).run(
+                executable: "/bin/sh", arguments: ["-c", "printf partial; sleep 3 & exit 0"]
+            )
+        }
+        XCTAssertEqual(result.terminationStatus, -1)
+        XCTAssertEqual(result.standardOutput, "partial")
+        XCTAssertTrue(result.standardError.contains("deadline"))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+    }
+
+    func testInheritedStderrCannotOutliveTheDeadline() throws {
+        let started = Date()
+        let result = try runWithinTestTimeout {
+            ProcessRunner(timeout: 0.2).run(
+                executable: "/bin/sh", arguments: ["-c", "printf diagnostic >&2; sleep 3 >/dev/null & exit 0"]
+            )
+        }
+        XCTAssertEqual(result.terminationStatus, -1)
+        XCTAssertTrue(result.standardError.contains("diagnostic"))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
     }
 
     func testReportsAFailureWhenTheExecutableIsMissing() throws {
