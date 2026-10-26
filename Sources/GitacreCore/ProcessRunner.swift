@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 public struct ProcessResult: Sendable {
     public let standardOutput: String
@@ -51,6 +52,7 @@ public struct ProcessRunner: ProcessRunning {
                 worktree: arguments.first == "-C" && arguments.count > 1 ? arguments[1].hashValue : nil,
                 duration: duration, failed: failed, timedOut: didTimeOut, exitStatus: exitStatus))
         }
+        let deadline = DispatchTime.now() + timeout
         let process = Process()
         let standardOutput = Pipe()
         let standardError = Pipe()
@@ -79,11 +81,12 @@ public struct ProcessRunner: ProcessRunning {
         let output = ByteBuffer()
         let errorOutput = ByteBuffer()
         let draining = DispatchGroup()
-        drain(standardOutput, into: output, group: draining)
-        drain(standardError, into: errorOutput, group: draining)
+        drain(standardOutput, into: output, until: deadline, group: draining)
+        drain(standardError, into: errorOutput, until: deadline, group: draining)
 
-        let timedOut = waitForExit(of: process, signalledBy: exited)
+        let childTimedOut = waitForExit(of: process, signalledBy: exited, until: deadline)
         draining.wait()
+        let timedOut = childTimedOut || !output.reachedEOF || !errorOutput.reachedEOF
         process.waitUntilExit()
 
         exitStatus = process.terminationStatus
@@ -104,17 +107,44 @@ public struct ProcessRunner: ProcessRunning {
         )
     }
 
-    private func drain(_ pipe: Pipe, into buffer: ByteBuffer, group: DispatchGroup) {
+    /// Nonblocking readers share the command deadline. A descendant may inherit a pipe
+    /// after the direct child exits; waiting for EOF must not keep a refresh alive forever.
+    private func drain(_ pipe: Pipe, into buffer: ByteBuffer, until deadline: DispatchTime, group: DispatchGroup) {
         DispatchQueue.global(qos: .userInitiated).async(group: group) {
-            buffer.set(pipe.fileHandleForReading.readDataToEndOfFile())
+            let handle = pipe.fileHandleForReading
+            defer { try? handle.close() }
+            let descriptor = handle.fileDescriptor
+            let flags = fcntl(descriptor, F_GETFL)
+            guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) >= 0 else { return }
+            var data = Data()
+            var reachedEOF = false
+            defer { buffer.set(data, reachedEOF: reachedEOF) }
+            var bytes = [UInt8](repeating: 0, count: 16_384)
+            while DispatchTime.now() < deadline {
+                let count = read(descriptor, &bytes, bytes.count)
+                if count > 0 {
+                    data.append(contentsOf: bytes.prefix(count))
+                } else if count == 0 {
+                    reachedEOF = true
+                    return
+                } else if errno == EINTR {
+                    continue
+                } else if errno == EAGAIN || errno == EWOULDBLOCK {
+                    var descriptorState = pollfd(fd: descriptor, events: Int16(POLLIN | POLLHUP), revents: 0)
+                    // A short poll bounds cleanup latency without spinning while a child is quiet.
+                    _ = poll(&descriptorState, 1, 20)
+                } else {
+                    return
+                }
+            }
         }
     }
 
     /// Waits for the child to exit, escalating to `SIGTERM` then `SIGKILL` past the timeout.
     ///
     /// Returns `true` when the child had to be killed.
-    private func waitForExit(of process: Process, signalledBy exited: DispatchSemaphore) -> Bool {
-        guard exited.wait(timeout: .now() + timeout) == .timedOut else { return false }
+    private func waitForExit(of process: Process, signalledBy exited: DispatchSemaphore, until deadline: DispatchTime) -> Bool {
+        guard exited.wait(timeout: deadline) == .timedOut else { return false }
 
         process.terminate()
         if exited.wait(timeout: .now() + Self.terminationGracePeriod) == .timedOut {
@@ -125,7 +155,7 @@ public struct ProcessRunner: ProcessRunning {
     }
 
     private func timeoutMessage(executable: String, collected: Data) -> String {
-        let reason = "\(executable) did not finish within \(Int(timeout))s and was terminated."
+        let reason = "\(executable) did not finish within \(timeout)s; the command or its output exceeded the deadline."
         let collectedText = String(decoding: collected, as: UTF8.self)
         guard !collectedText.isEmpty else { return reason }
         return collectedText.hasSuffix("\n") ? collectedText + reason : collectedText + "\n" + reason
@@ -136,10 +166,18 @@ public struct ProcessRunner: ProcessRunning {
 private final class ByteBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var storage = Data()
+    private var finished = false
 
-    func set(_ data: Data) {
+    var reachedEOF: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return finished
+    }
+
+    func set(_ data: Data, reachedEOF: Bool) {
         lock.lock()
         storage = data
+        finished = reachedEOF
         lock.unlock()
     }
 
