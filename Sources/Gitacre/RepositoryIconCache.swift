@@ -1,47 +1,83 @@
 import AppKit
+import ImageIO
 
-/// Keeps decoded repository icons in memory across status refreshes.
-///
-/// `RepositoryGlyph` is evaluated for every visible row, and SwiftUI re-evaluates a body
-/// far more often than the data behind it changes — every hover, selection, scroll step,
-/// and published property. Reading and decoding the icon inside `body` therefore put
-/// synchronous disk reads on the main thread in the middle of a scrolling list.
-/// Discovery invalidates the cache; ordinary status refreshes reuse decoded images.
+/// Immutable images created by a worker, then only read by the UI.
+struct LoadedRepositoryIcon: @unchecked Sendable {
+    let image: NSImage?
+}
+
+/// Coalesces icon loads and keeps disk reads and raster decoding off the main actor.
 @MainActor
-final class RepositoryIconCache {
+final class RepositoryIconCache: ObservableObject {
     static let shared = RepositoryIconCache()
+    @Published private(set) var revision: UInt64 = 0
 
+    private struct Pending {
+        let id = UUID()
+        let task: Task<LoadedRepositoryIcon, Never>
+    }
     private var images: [String: NSImage] = [:]
-    /// Paths that failed to decode, so a broken icon is not retried on every render.
     private var unreadablePaths: Set<String> = []
+    private var pending: [String: Pending] = [:]
+    private let loader: @Sendable (String) async -> LoadedRepositoryIcon
 
-    private init() {}
+    init(loader: @escaping @Sendable (String) async -> LoadedRepositoryIcon = { path in
+        // Decode small raster thumbnails before publication; a 19-point glyph never
+        // needs a full-resolution project image. NSImage covers formats such as SVG.
+        if let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+           let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: 64,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true
+           ] as CFDictionary) {
+            return LoadedRepositoryIcon(image: NSImage(cgImage: thumbnail, size: .zero))
+        }
+        return LoadedRepositoryIcon(image: NSImage(contentsOfFile: path))
+    }) {
+        self.loader = loader
+    }
 
-    func image(atPath path: String?) -> NSImage? {
+    func image(atPath path: String?) async -> NSImage? {
         guard let path else { return nil }
         if let cached = images[path] { return cached }
         guard !unreadablePaths.contains(path) else { return nil }
-
-        guard let image = NSImage(contentsOfFile: path) else {
-            unreadablePaths.insert(path)
-            return nil
+        let request: Pending
+        if let active = pending[path] {
+            request = active
+        } else {
+            let loader = self.loader
+            request = Pending(task: Task.detached(priority: .utility) { await loader(path) })
+            pending[path] = request
         }
-        images[path] = image
-        return image
+        let loaded = await request.task.value
+        // Invalidation may remove this request while it is reading. Never let an old
+        // completion overwrite a newer icon or restore an invalidated cache entry.
+        guard pending[path]?.id == request.id else { return images[path] }
+        pending[path] = nil
+        if let image = loaded.image {
+            images[path] = image
+        } else {
+            unreadablePaths.insert(path)
+        }
+        return loaded.image
     }
 
-    /// Drops everything so a discovery scan picks up icons that were added, replaced, or removed.
-    ///
-    /// Bounds staleness to one discovery interval without paying a `stat` on every render.
     func invalidate(paths: Set<String>) {
-        for path in Set(images.keys).union(unreadablePaths) where paths.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
+        let known = Set(images.keys).union(unreadablePaths).union(pending.keys)
+        for path in known where paths.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
             images.removeValue(forKey: path)
             unreadablePaths.remove(path)
+            pending.removeValue(forKey: path)?.task.cancel()
         }
+        revision &+= 1
     }
 
     func invalidate() {
         images.removeAll(keepingCapacity: true)
         unreadablePaths.removeAll(keepingCapacity: true)
+        for request in pending.values { request.task.cancel() }
+        pending.removeAll()
+        revision &+= 1
     }
 }

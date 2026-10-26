@@ -62,11 +62,31 @@ struct RepositoryListView: View {
                             .padding(.vertical, 5)
                         }
                         ForEach(sections) { section in
-                            RepositorySectionView(
-                                section: section,
-                                selectedRepositoryID: $selectedRepositoryID,
-                                expandedRepositoryIDs: $expandedRepositoryIDs
-                            )
+                            Section {
+                                ForEach(Array(section.repositories.enumerated()), id: \.element.id) { index, repository in
+                                    RepositoryRow(
+                                        repository: repository,
+                                        selected: selectedRepositoryID == repository.id,
+                                        expanded: expandedRepositoryIDs.contains(repository.id),
+                                        onSelect: { selectedRepositoryID = repository.id },
+                                        onToggleExpansion: {
+                                            selectedRepositoryID = repository.id
+                                            if expandedRepositoryIDs.contains(repository.id) {
+                                                expandedRepositoryIDs.remove(repository.id)
+                                            } else {
+                                                expandedRepositoryIDs.insert(repository.id)
+                                            }
+                                        }
+                                    )
+                                    .overlay(alignment: .bottom) {
+                                        if index < section.repositories.count - 1 {
+                                            Hairline().padding(.horizontal, 10).padding(.leading, 35)
+                                        }
+                                    }
+                                }
+                            } header: {
+                                RepositorySectionHeader(title: section.title)
+                            }
                         }
                     }
                     .padding(.horizontal, 5)
@@ -130,45 +150,20 @@ func pendingRepositoryDisplayOrder(_ repositories: [Repository], remoteAttention
     repositorySections(repositories: repositories, showsPendingOnly: true, remoteAttentionIDs: remoteAttentionIDs).flatMap(\.repositories)
 }
 
-private struct RepositorySectionView: View {
-    let section: RepositorySection
-    @Binding var selectedRepositoryID: String?
-    @Binding var expandedRepositoryIDs: Set<String>
+private struct RepositorySectionHeader: View {
+    let title: String
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(section.title)
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .tracking(0.66)
-                Spacer()
-            }
-            .foregroundStyle(.tertiary)
-            .padding(.horizontal, 10)
-            .frame(height: 27, alignment: .bottom)
-            .padding(.bottom, 5)
-
-            ForEach(Array(section.repositories.enumerated()), id: \.element.id) { index, repository in
-                RepositoryRow(
-                    repository: repository,
-                    selected: selectedRepositoryID == repository.id,
-                    expanded: expandedRepositoryIDs.contains(repository.id),
-                    onSelect: { selectedRepositoryID = repository.id },
-                    onToggleExpansion: {
-                        selectedRepositoryID = repository.id
-                        if expandedRepositoryIDs.contains(repository.id) {
-                            expandedRepositoryIDs.remove(repository.id)
-                        } else {
-                            expandedRepositoryIDs.insert(repository.id)
-                        }
-                    }
-                )
-
-                if index < section.repositories.count - 1 {
-                    Hairline().padding(.horizontal, 10).padding(.leading, 35)
-                }
-            }
+        HStack {
+            Text(title)
+                .font(.system(size: 9.5, weight: .semibold))
+                .tracking(0.66)
+            Spacer()
         }
+        .foregroundStyle(.tertiary)
+        .padding(.horizontal, 10)
+        .frame(height: 27, alignment: .bottom)
+        .padding(.bottom, 5)
     }
 }
 
@@ -375,16 +370,19 @@ private struct WorktreeRow: View {
 }
 
 struct RepositoryGlyph: View {
+    @ObservedObject private var iconCache = RepositoryIconCache.shared
+    @State private var image: NSImage?
+
+    private struct IconRequest: Equatable {
+        let path: String?
+        let revision: UInt64
+    }
     let repository: Repository
     let status: StatusRole
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        // Resolved once per body: referencing a computed property twice used to decode
-        // the icon from disk twice for every row, on every render.
-        let image = RepositoryIconCache.shared.image(atPath: repository.iconPath)
-
-        return ZStack {
+        ZStack {
             RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .fill(image == nil ? status.color(colorScheme).opacity(0.10) : Color.clear)
             if let image {
@@ -401,6 +399,12 @@ struct RepositoryGlyph: View {
                 .strokeBorder(GitacreTheme.hairline(colorScheme), lineWidth: 0.5)
         }
         .accessibilityHidden(true)
+        .task(id: IconRequest(path: repository.iconPath, revision: iconCache.revision)) {
+            image = nil
+            let loaded = await iconCache.image(atPath: repository.iconPath)
+            guard !Task.isCancelled else { return }
+            image = loaded
+        }
     }
 }
 
