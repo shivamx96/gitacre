@@ -5,23 +5,21 @@ import SwiftUI
 
 extension Notification.Name {
     static let closeGitacrePanel = Notification.Name("closeGitacrePanel")
-    static let openGitacreSettings = Notification.Name("openGitacreSettings")
 }
 
 @main
-struct GitacreApp: App {
-    @NSApplicationDelegateAdaptor private var appDelegate: GitacreAppDelegate
-
-    var body: some Scene {
-        Settings { EmptyView() }
-            .commands {
-                CommandGroup(replacing: .appSettings) {
-                    Button("Settings…") {
-                        NotificationCenter.default.post(name: .openGitacreSettings, object: nil)
-                    }
-                    .keyboardShortcut(",", modifiers: .command)
-                }
-            }
+enum GitacreApp {
+    @MainActor
+    static func main() {
+        let application = NSApplication.shared
+        let delegate = GitacreAppDelegate()
+        // AppKit owns all windows. A placeholder SwiftUI Settings scene can
+        // otherwise surface an empty window when the menu-bar app activates.
+        application.setActivationPolicy(.accessory)
+        application.delegate = delegate
+        withExtendedLifetime(delegate) {
+            application.run()
+        }
     }
 }
 
@@ -38,6 +36,7 @@ final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.applicationIconImage = GitacreIconRenderer.applicationIcon()
+        configureApplicationMenu()
         configurePopover()
         configureStatusItem()
         configureGlobalShortcut()
@@ -48,17 +47,52 @@ final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
             name: .closeGitacrePanel,
             object: nil
         )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(openSettingsFromNotification),
-            name: .openGitacreSettings,
-            object: nil
-        )
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         globalShortcut?.invalidate()
         NotificationCenter.default.removeObserver(self)
+    }
+
+    private func configureApplicationMenu() {
+        let menu = NSMenu()
+        let applicationItem = NSMenuItem()
+        let applicationMenu = NSMenu(title: "gitacre")
+        applicationItem.submenu = applicationMenu
+        menu.addItem(applicationItem)
+
+        applicationMenu.addItem(withTitle: "About gitacre", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        applicationMenu.addItem(.separator())
+        let settingsItem = applicationMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        applicationMenu.addItem(.separator())
+        let servicesItem = NSMenuItem(title: "Services", action: nil, keyEquivalent: "")
+        let servicesMenu = NSMenu(title: "Services")
+        servicesItem.submenu = servicesMenu
+        applicationMenu.addItem(servicesItem)
+        NSApp.servicesMenu = servicesMenu
+        applicationMenu.addItem(.separator())
+        applicationMenu.addItem(withTitle: "Hide gitacre", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthers = applicationMenu.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        applicationMenu.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        applicationMenu.addItem(.separator())
+        applicationMenu.addItem(withTitle: "Quit gitacre", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+
+        // Keep standard text-editing shortcuts in the hosted SwiftUI views.
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editItem.submenu = editMenu
+        menu.addItem(editItem)
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        NSApp.mainMenu = menu
     }
 
     private func configurePopover() {
@@ -145,7 +179,7 @@ final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
 
     @objc private func closePopover() { popover.performClose(nil) }
 
-    private func showSettings() {
+    @objc private func showSettings() {
         closePopover()
         if settingsWindow == nil {
             let controller = NSHostingController(rootView: GitacreSettingsView().environmentObject(model).environmentObject(updates))
@@ -167,8 +201,6 @@ final class GitacreAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegat
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
-
-    @objc private func openSettingsFromNotification() { showSettings() }
 
     func windowWillClose(_ notification: Notification) {
         NSApp.hide(nil)
